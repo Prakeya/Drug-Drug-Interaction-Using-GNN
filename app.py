@@ -14,459 +14,529 @@ from rdkit.Chem.Scaffolds import MurckoScaffold
 import matplotlib.pyplot as plt
 
 # ==========================================
-# 🌿 PREMIUM WELLNESS DASHBOARD UI (CSS)
+# 🛡️ SAFE TORCH IMPORT (WINDOWS HARDENING)
+# ==========================================
+try:
+    import torch
+    from torch_geometric.data import Data
+    HAS_PYG = True
+    TORCH_AVAILABLE = True
+except Exception:
+    HAS_PYG = False
+    TORCH_AVAILABLE = False
+
+# ==========================================
+# 🧬 RESEARCH-GRADE BIOMEDICAL DASHBOARD UI (CSS)
 # ==========================================
 st.set_page_config(
-    page_title="DrugLens Wellness | Insight Engine",
-    page_icon="💊",
-    layout="centered",
+    page_title="DrugLens Research | Interaction Intelligence",
+    page_icon="🧬",
+    layout="wide",
     initial_sidebar_state="collapsed",
 )
 
-# FORCE ACCESSIBILITY & VISIBILITY OVERRIDES
-st.markdown("""
+# Initialize Session State
+if 'analysis_mode' not in st.session_state:
+    st.session_state.analysis_mode = False
+if 'analysis_results' not in st.session_state:
+    st.session_state.analysis_results = None
+
+# COLOR PALETTE
+# Background: #FFE6E6
+# Soft card tone: #E1AFD1
+# Muted accent: #AD88C6
+# Primary accent: #7469B6
+
+st.markdown(f"""
 <style>
-    @import url('https://fonts.googleapis.com/css2?family=Quicksand:wght@300;400;500;600;700&family=Inter:wght@400;600;800&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap');
     
-    /* ── Global Theme & Forced Visibility ── */
-    html, body, [class*="css"] {
-        font-family: 'Quicksand', sans-serif;
-        background-color: #f6f3ee !important;
-        color: #1e293b !important;
-    }
+    /* ── Global Theme ── */
+    html, body, [class*="css"] {{
+        font-family: 'Inter', sans-serif;
+        background-color: #FFE6E6 !important;
+        color: #2D3436 !important;
+    }}
     
-    .stApp { background: #f6f3ee; }
+    .stApp {{ background: #FFE6E6; }}
 
-    /* ABSOLUTE TEXT VISIBILITY OVERRIDE */
-    .stMarkdown, .stText, p, span, div, li {
-        color: #1e293b !important;
-        opacity: 1 !important;
-    }
-
-    /* Headings & Section Titles */
-    h1, h2, h3, h4, h5, h6, .section-title, .hero-title {
-        color: #0f172a !important;
-        font-weight: 800 !important;
-        opacity: 1 !important;
-    }
-
-    /* Input Labels */
-    .input-label, label, [data-testid="stWidgetLabel"] p {
-        color: #0f172a !important;
-        font-weight: 700 !important;
-        opacity: 1 !important;
-        font-size: 1rem !important;
-    }
-
-    /* Table & Dataframe Content */
-    .stTable td, .stTable th, [data-testid="stTable"] td, [data-testid="stTable"] th {
-        color: #0f172a !important;
-        opacity: 1 !important;
-    }
-    
-    /* Metric Cards */
-    [data-testid="stMetricValue"] div {
-        color: #0f172a !important;
-        opacity: 1 !important;
-    }
-    [data-testid="stMetricLabel"] p {
-        color: #334155 !important;
-        opacity: 1 !important;
-    }
-
-    /* Metadata & Captions */
-    .stCaption, caption, .metric-lbl {
-        color: #475569 !important;
-        opacity: 1 !important;
-        font-weight: 500 !important;
-    }
+    @keyframes fadeIn {{
+        from {{ opacity: 0; transform: translateY(10px); }}
+        to {{ opacity: 1; transform: translateY(0); }}
+    }}
 
     /* ── Hide Streamlit Elements ── */
-    header, footer, #MainMenu { visibility: hidden !important; height: 0 !important; }
+    header, footer, #MainMenu {{ visibility: hidden !important; height: 0 !important; }}
 
-    /* ── Premium Card Components ── */
-    .app-card {
-        background: #ffffff;
-        border-radius: 28px;
-        padding: 2.5rem;
-        box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.05);
-        margin-bottom: 2rem;
-        border: 1px solid rgba(0, 0, 0, 0.02);
-        color: #1a202c !important;
-    }
-    
-    .card-pink { background-color: #fff1f2 !important; border: 1px solid #fee2e2 !important; }
-    .card-blue { background-color: #f0f9ff !important; border: 1px solid #e0f2fe !important; }
-    .card-lavender { background-color: #f5f3ff !important; border: 1px solid #ede9fe !important; }
-    .card-mint { background-color: #f0fdf4 !important; border: 1px solid #dcfce7 !important; }
-    .card-cream { background-color: #fffbeb !important; border: 1px solid #fef3c7 !important; }
-
-    /* ── Typography & Headings ── */
-    .hero-title {
-        font-family: 'Inter', sans-serif;
+    /* ── Typography ── */
+    .main-title {{
         font-size: 3.5rem;
         font-weight: 800;
-        letter-spacing: -0.05em;
         text-align: center;
-        background: linear-gradient(135deg, #1e3a8a 0%, #6d28d9 100%);
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
-        margin-bottom: 0.5rem;
-    }
-    .hero-subtitle {
-        font-size: 1.15rem;
-        color: #334155 !important;
-        text-align: center;
-        margin-bottom: 4rem;
+        color: #7469B6;
+        margin-bottom: 0.1rem;
+        letter-spacing: -0.06em;
+    }}
+    .sub-title {{
+        font-size: 1.1rem;
         font-weight: 500;
-        letter-spacing: 0.01em;
-    }
-    .section-title {
-        font-family: 'Inter', sans-serif;
-        font-size: 1.25rem;
-        font-weight: 700;
-        color: #0f172a !important;
+        text-align: center;
+        color: #AD88C6;
+        margin-bottom: 3rem;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+    }}
+
+    /* ── Result Container Control ── */
+    .result-container {{
+        max-width: 1100px;
+        margin: 0 auto;
+        padding: 0 1rem;
+    }}
+
+    /* ── Cards ── */
+    .research-card {{
+        background: #ffffff;
+        border-radius: 28px;
+        padding: 2.2rem;
+        box-shadow: 0 12px 35px rgba(116, 105, 182, 0.07);
+        border: 1px solid rgba(173, 136, 198, 0.08);
         margin-bottom: 1.5rem;
-        display: flex;
-        align-items: center;
-        gap: 10px;
-    }
+        animation: fadeIn 0.5s ease-out;
+    }}
+    .accent-card {{
+        background: #7469B6;
+        color: white;
+        border-radius: 26px;
+        padding: 2.5rem;
+        box-shadow: 0 15px 40px rgba(116, 105, 182, 0.3);
+    }}
 
     /* ── Input Styling ── */
-    .stTextInput input {
-        background: #1e293b !important;
-        border: 2px solid #0f172a !important;
+    .stTextInput > div > div > input {{
+        background-color: #2D3436 !important;
         color: #ffffff !important;
-        border-radius: 18px !important;
-        height: 4rem !important;
-        padding: 0 1.5rem !important;
+        border-radius: 16px !important;
+        border: 2px solid #7469B6 !important;
+        padding: 14px 22px !important;
+        font-family: 'JetBrains Mono', monospace !important;
+        text-align: center;
         font-size: 1.05rem !important;
-        font-family: 'Inter', monospace !important;
-    }
-
-    /* ── CTA Button ── */
-    .stButton>button {
-        background: linear-gradient(135deg, #1d4ed8 0%, #7c3aed 100%) !important;
-        color: white !important;
+    }}
+    .stTextInput [data-testid="stWidgetLabel"] p {{
+        color: #7469B6 !important;
         font-weight: 800 !important;
-        border-radius: 20px !important;
-        height: 4.5rem !important;
-        box-shadow: 0 10px 20px rgba(29, 78, 216, 0.3) !important;
-    }
+        font-size: 0.9rem !important;
+        text-transform: uppercase;
+        margin-bottom: 10px !important;
+        letter-spacing: 0.04em;
+    }}
 
-    /* ── Result Metrics ── */
-    .prediction-val {
-        font-size: 3rem;
-        font-weight: 800;
-        color: #9f1239 !important;
-        margin: 1rem 0;
-    }
-    .confidence-val {
-        font-size: 1.5rem;
+    /* ── Optimized Button ── */
+    .stButton > button {{
+        background: linear-gradient(135deg, #7469B6 0%, #AD88C6 100%) !important;
+        color: white !important;
+        border: none !important;
+        border-radius: 60px !important;
+        padding: 0.8rem 3.5rem !important;
+        font-weight: 800 !important;
+        font-size: 1.15rem !important;
+        box-shadow: 0 8px 25px rgba(116, 105, 182, 0.25) !important;
+        transition: all 0.3s ease !important;
+    }}
+    .stButton > button:hover {{
+        transform: translateY(-2px);
+        box-shadow: 0 12px 30px rgba(116, 105, 182, 0.35) !important;
+    }}
+    .back-btn button {{
+        background: transparent !important;
+        color: #7469B6 !important;
+        border: 2px solid #7469B6 !important;
+        font-size: 0.9rem !important;
+        padding: 0.5rem 2rem !important;
+    }}
+
+    /* ── Components ── */
+    .status-chip {{
+        display: inline-flex;
+        align-items: center;
+        background: #FDF0F0;
+        color: #7469B6;
+        padding: 0.5rem 1.2rem;
+        border-radius: 60px;
+        font-size: 0.85rem;
         font-weight: 700;
-        color: #581c87 !important;
-    }
-
-    /* ── Metrics ── */
-    .metric-val { font-size: 1.4rem; font-weight: 800; color: #1e40af !important; }
-    .metric-lbl { font-size: 0.8rem; color: #334155 !important; text-transform: uppercase; font-weight: 700 !important; }
-
-    /* Visualization Frame */
-    .vis-frame {
-        background: white;
+        margin: 5px;
+        border: 1px solid rgba(116, 105, 182, 0.15);
+    }}
+    .mol-frame {{
+        background: #FAFAFA;
         border-radius: 20px;
-        padding: 1rem;
-        border: 1px solid rgba(0,0,0,0.05);
+        padding: 15px;
         display: flex;
         justify-content: center;
         align-items: center;
-    }
+        border: 1px solid rgba(0,0,0,0.02);
+    }}
+    .pred-label {{
+        font-size: 2.5rem;
+        font-weight: 900;
+        color: #ffffff;
+        margin: 0.5rem 0;
+    }}
+    .conf-badge {{
+        background: rgba(255,255,255,0.2);
+        padding: 0.4rem 1rem;
+        border-radius: 12px;
+        font-size: 0.95rem;
+        font-weight: 700;
+    }}
+    .descriptor-val {{
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 1.1rem;
+        font-weight: 800;
+        color: #7469B6;
+    }}
+    .descriptor-label {{
+        font-size: 0.75rem;
+        font-weight: 700;
+        color: #AD88C6;
+        text-transform: uppercase;
+        letter-spacing: 0.03em;
+    }}
+    .bar-container {{
+        width: 100%;
+        background-color: #FDF0F0;
+        border-radius: 10px;
+        margin: 5px 0 15px 0;
+        height: 9px;
+    }}
+    .bar-fill {{
+        height: 100%;
+        border-radius: 10px;
+        background: #7469B6;
+    }}
+    .signal-pill {{
+        background: rgba(173, 136, 198, 0.12);
+        color: #7469B6;
+        padding: 0.3rem 0.7rem;
+        border-radius: 8px;
+        font-size: 0.75rem;
+        font-weight: 700;
+        margin: 2px;
+        display: inline-block;
+    }}
 </style>
 """, unsafe_allow_html=True)
 
 # ==========================================
-# 🧠 BIO-LOGIC & DESCRIPTOR ENGINE
+# 🧠 BIOMEDICAL RESEARCH ENGINE
 # ==========================================
 
+def get_atom_features(atom):
+    hybridization_map = {
+        Chem.rdchem.HybridizationType.S: 1,
+        Chem.rdchem.HybridizationType.SP: 2,
+        Chem.rdchem.HybridizationType.SP2: 3,
+        Chem.rdchem.HybridizationType.SP3: 4,
+        Chem.rdchem.HybridizationType.SP3D: 5,
+        Chem.rdchem.HybridizationType.SP3D2: 6,
+    }
+    return [
+        atom.GetAtomicNum(),
+        atom.GetDegree(),
+        atom.GetFormalCharge(),
+        float(hybridization_map.get(atom.GetHybridization(), 0)),
+        int(atom.GetIsAromatic()),
+        atom.GetTotalNumHs(),
+        atom.GetExplicitValence() + atom.GetImplicitValence()
+    ]
+
+def get_bond_features(bond):
+    bt = bond.GetBondType()
+    order = 0.0
+    if bt == Chem.rdchem.BondType.SINGLE: order = 1.0
+    elif bt == Chem.rdchem.BondType.DOUBLE: order = 2.0
+    elif bt == Chem.rdchem.BondType.TRIPLE: order = 3.0
+    elif bt == Chem.rdchem.BondType.AROMATIC: order = 1.5
+    
+    return [
+        order,
+        int(bond.GetIsConjugated()),
+        int(bond.IsInRing())
+    ]
+
+def mol_to_graph_data(mol):
+    if not mol: return None
+    try:
+        node_feats = [get_atom_features(a) for a in mol.GetAtoms()]
+        x = np.array(node_feats, dtype=np.float32)
+        edge_index, edge_attr = [], []
+        for bond in mol.GetBonds():
+            u, v = bond.GetBeginAtomIdx(), bond.GetEndAtomIdx()
+            bf = get_bond_features(bond)
+            edge_index.extend([[u, v], [v, u]])
+            edge_attr.extend([bf, bf])
+        edge_index = np.array(edge_index, dtype=np.int64).T
+        edge_attr = np.array(edge_attr, dtype=np.float32)
+        if HAS_PYG and TORCH_AVAILABLE:
+            return Data(x=torch.from_numpy(x), edge_index=torch.from_numpy(edge_index), edge_attr=torch.from_numpy(edge_attr))
+        return {"x": x, "edge_index": edge_index, "edge_attr": edge_attr}
+    except: return None
+
+def compute_graph_metrics(mol):
+    if not mol: return {}
+    counts = {"SINGLE": 0, "DOUBLE": 0, "TRIPLE": 0, "AROMATIC": 0}
+    for b in mol.GetBonds():
+        bt = b.GetBondType()
+        if bt == Chem.rdchem.BondType.SINGLE: counts["SINGLE"] += 1
+        elif bt == Chem.rdchem.BondType.DOUBLE: counts["DOUBLE"] += 1
+        elif bt == Chem.rdchem.BondType.TRIPLE: counts["TRIPLE"] += 1
+        elif bt == Chem.rdchem.BondType.AROMATIC: counts["AROMATIC"] += 1
+    return {
+        "nodes": mol.GetNumAtoms(),
+        "edges": mol.GetNumBonds(),
+        "rings": mol.GetRingInfo().NumRings(),
+        "avg_degree": np.mean([a.GetDegree() for a in mol.GetAtoms()]) if mol.GetNumAtoms() > 0 else 0,
+        "bond_counts": counts
+    }
+
+def get_tanimoto_similarity(mol_a, mol_b):
+    try:
+        if mol_a is None or mol_b is None: return 0.0
+        fp1 = AllChem.GetMorganFingerprintAsBitVect(mol_a, 2, nBits=2048)
+        fp2 = AllChem.GetMorganFingerprintAsBitVect(mol_b, 2, nBits=2048)
+        return round(DataStructs.TanimotoSimilarity(fp1, fp2), 3)
+    except: return 0.0
+
 @st.cache_resource
-def get_main_model():
+def load_research_model():
     path = "models/main_multiclass.joblib"
     return joblib.load(path) if os.path.exists(path) else None
 
 @st.cache_data
-def analyze_molecule_properties(smiles):
-    mol = Chem.MolFromSmiles(smiles)
-    if not mol: return None
-    try: AllChem.ComputeGasteigerCharges(mol)
-    except: pass
-    chg = [a.GetDoubleProp("_GasteigerCharge") for a in mol.GetAtoms() if a.HasProp("_GasteigerCharge")]
-    return {
-        "Molecular Weight": f"{Descriptors.MolWt(mol):.2f}",
-        "LogP": f"{Descriptors.MolLogP(mol):.2f}",
-        "TPSA": f"{Descriptors.TPSA(mol):.2f}",
-        "H-Bond Donors": int(Descriptors.NumHDonors(mol)),
-        "H-Bond Acceptors": int(Descriptors.NumHAcceptors(mol)),
-        "Rotatable Bonds": int(Descriptors.NumRotatableBonds(mol)),
-        "Heavy Atom Count": int(Descriptors.HeavyAtomCount(mol)),
-        "Ring Count": int(Descriptors.RingCount(mol)),
-        "Aromatic Rings": int(Descriptors.NumAromaticRings(mol)),
-        "Charge Range": f"{min(chg):.2f} / {max(chg):.2f}" if chg else "0.00"
-    }
+def get_safe_descriptors(smiles):
+    try:
+        mol = Chem.MolFromSmiles(smiles)
+        if not mol: return None
+        try: AllChem.ComputeGasteigerCharges(mol)
+        except: pass
+        chg = [a.GetDoubleProp("_GasteigerCharge") for a in mol.GetAtoms() if a.HasProp("_GasteigerCharge")]
+        return {
+            "MW": Descriptors.MolWt(mol), "LogP": Descriptors.MolLogP(mol), "TPSA": Descriptors.TPSA(mol),
+            "HBD": Descriptors.NumHDonors(mol), "HBA": Descriptors.NumHAcceptors(mol), "RotB": Descriptors.NumRotatableBonds(mol),
+            "HA": Descriptors.HeavyAtomCount(mol), "Aro": Descriptors.NumAromaticRings(mol),
+            "Charge": f"{min(chg):.2f}/{max(chg):.2f}" if chg else "0.00"
+        }
+    except: return None
 
 @st.cache_data
-def generate_mol_preview(smiles, highlights=None):
+def get_pharmacological_signals(smiles):
+    mol = Chem.MolFromSmiles(smiles)
+    if not mol: return []
+    sigs = []
+    pats = {
+        "CYP Inhibitor": ["n1ccnc1", "c1ccc(cc1)C[N+]"], "CYP Inducer": ["c1ccc2c(c1)ccc3c2ccc4c3cccc4"],
+        "CYP Substrate": ["C(=O)O", "C(=O)N"], "Prodrug": ["C(=O)OC", "C(=O)NC"], "QT Risk": ["N1CCN(CC1)CC", "C1CCN(CC1)CC"],
+    }
+    for n, s in pats.items():
+        for sm in s:
+            if mol.HasSubstructMatch(Chem.MolFromSmarts(sm)): sigs.append(n); break
+    lp, mw = Descriptors.MolLogP(mol), Descriptors.MolWt(mol)
+    if lp > 3.0 and mw < 450: sigs.append("CNS Depressant")
+    if mw < 200 or mw > 800: sigs.append("Narrow TI")
+    return list(set(sigs))
+
+def draw_mol_clean(smiles, highlights=None):
     mol = Chem.MolFromSmiles(smiles)
     if not mol: return None
-    d = Draw.MolDraw2DCairo(400, 350)
-    opts = d.drawOptions()
-    opts.backgroundColour = (1,1,1,0)
-    opts.bondLineWidth = 3
+    d = Draw.MolDraw2DCairo(500, 450)
+    o = d.drawOptions()
+    o.backgroundColour = (1,1,1,0); o.bondLineWidth = 3; o.padding = 0.1
+    o.highlightRadius = 0.4; o.setHighlightColour((0.4, 0.8, 0.4, 0.45))
     Draw.PrepareMolForDrawing(mol)
     d.DrawMolecule(mol, highlightAtoms=list(highlights) if highlights else [])
     d.FinishDrawing()
     return base64.b64encode(d.GetDrawingText()).decode()
 
-def render_structural_graph(smiles):
+def render_topo_graph(smiles):
     mol = Chem.MolFromSmiles(smiles)
-    if not mol: return None
+    if not mol: return None, {}
     G = nx.Graph()
-    for b in mol.GetBonds():
-        G.add_edge(b.GetBeginAtomIdx(), b.GetEndAtomIdx())
+    for atom in mol.GetAtoms(): G.add_node(atom.GetIdx(), symbol=atom.GetSymbol())
+    edge_list, edge_widths, edge_styles = [], [], []
+    for bond in mol.GetBonds():
+        edge_list.append((bond.GetBeginAtomIdx(), bond.GetEndAtomIdx()))
+        bt = bond.GetBondType()
+        if bt == Chem.rdchem.BondType.SINGLE: edge_widths.append(1.5); edge_styles.append('solid')
+        elif bt == Chem.rdchem.BondType.DOUBLE: edge_widths.append(3.5); edge_styles.append('solid')
+        elif bt == Chem.rdchem.BondType.TRIPLE: edge_widths.append(5.5); edge_styles.append('solid')
+        elif bt == Chem.rdchem.BondType.AROMATIC: edge_widths.append(2.5); edge_styles.append('dashed')
+        else: edge_widths.append(1.0); edge_styles.append('solid')
+    fig, ax = plt.subplots(figsize=(5, 5)); fig.patch.set_facecolor('none')
+    pos = nx.kamada_kawai_layout(nx.Graph(edge_list)) if edge_list else {}
+    nx.draw_networkx_nodes(nx.Graph(edge_list), pos, ax=ax, node_color='#7469B6', alpha=0.9, node_size=500)
+    labels = {atom.GetIdx(): atom.GetSymbol() for atom in mol.GetAtoms()}
+    nx.draw_networkx_labels(nx.Graph(edge_list), pos, labels=labels, ax=ax, font_size=9, font_color='white', font_weight='bold')
+    for i, (u, v) in enumerate(edge_list):
+        nx.draw_networkx_edges(nx.Graph([(u, v)]), pos, ax=ax, width=edge_widths[i], style=edge_styles[i], edge_color='#AD88C6', alpha=0.6)
+    buf = BytesIO(); plt.savefig(buf, format="png", transparent=True, bbox_inches='tight', dpi=140); plt.close(fig)
+    return base64.b64encode(buf.getvalue()).decode(), compute_graph_metrics(mol)
+
+# ==========================================
+# 🗺️ NAVIGATION & FLOW CONTROL
+# ==========================================
+
+def switch_to_results(): st.session_state.analysis_mode = True
+def switch_to_input(): st.session_state.analysis_mode = False
+
+# ==========================================
+# 🏠 SCREEN 1: MOLECULAR INPUT
+# ==========================================
+
+if not st.session_state.analysis_mode:
+    st.markdown("<div class='main-title'>Drug Interaction Predictor</div>", unsafe_allow_html=True)
+    st.markdown("<div class='sub-title'>A biomedical research dashboard for molecular interaction analysis</div>", unsafe_allow_html=True)
+
+    with st.container():
+        col_inp1, col_inp2 = st.columns(2)
+        with col_inp1:
+            smi_a = st.text_input("Compound A SMILES", placeholder="CC(=O)OC1=CC=CC=C1C(=O)O", key="smi_a")
+            if smi_a:
+                img_a = draw_mol_clean(smi_a)
+                if img_a: st.markdown(f"<div class='research-card'><div class='mol-frame'><img src='data:image/png;base64,{img_a}' width='100%'></div></div>", unsafe_allow_html=True)
+                else: st.error("SMILES Architecture Invalid")
+            else: st.markdown("<div class='research-card' style='height:300px; display:flex; align-items:center; justify-content:center; border:2px dashed #AD88C6; background:#FDF0F0; color:#AD88C6; font-weight:700;'>Compound A Slot</div>", unsafe_allow_html=True)
+        with col_inp2:
+            smi_b = st.text_input("Compound B SMILES", placeholder="CC(C)CC1=CC=C(C=C1)C(C)C(=O)O", key="smi_b")
+            if smi_b:
+                img_b = draw_mol_clean(smi_b)
+                if img_b: st.markdown(f"<div class='research-card'><div class='mol-frame'><img src='data:image/png;base64,{img_b}' width='100%'></div></div>", unsafe_allow_html=True)
+                else: st.error("SMILES Architecture Invalid")
+            else: st.markdown("<div class='research-card' style='height:300px; display:flex; align-items:center; justify-content:center; border:2px dashed #AD88C6; background:#FDF0F0; color:#AD88C6; font-weight:700;'>Compound B Slot</div>", unsafe_allow_html=True)
+
+    _, center_col, _ = st.columns([1, 1.5, 1])
+    with center_col:
+        st.markdown("<br>", unsafe_allow_html=True)
+        if st.button("INITIATE INTERACTION ANALYTICS", use_container_width=True):
+            if smi_a and smi_b and Chem.MolFromSmiles(smi_a) and Chem.MolFromSmiles(smi_b):
+                st.session_state.analysis_results = {"smi_a": smi_a, "smi_b": smi_b}
+                switch_to_results(); st.rerun()
+            else: st.error("Dual molecules required.")
+
+# ==========================================
+# 📊 SCREEN 2: RESEARCH ANALYSIS
+# ==========================================
+
+else:
+    res, sa, sb = st.session_state.analysis_results, st.session_state.analysis_results['smi_a'], st.session_state.analysis_results['smi_b']
+    m1, m2 = Chem.MolFromSmiles(sa), Chem.MolFromSmiles(sb)
+    model_data = load_research_model()
     
-    fig, ax = plt.subplots(figsize=(4, 4))
-    fig.patch.set_facecolor('none')
-    pos = nx.spring_layout(G, k=0.8, iterations=50)
-    nx.draw(G, pos, ax=ax, node_color='#1e40af', edge_color='#94a3b8', node_size=150, width=2, with_labels=False)
-    buf = BytesIO()
-    plt.savefig(buf, format="png", transparent=True, bbox_inches='tight', dpi=120)
-    plt.close(fig)
-    return base64.b64encode(buf.getvalue()).decode()
+    with st.spinner("Decoding Molecular Patterns..."):
+        def get_v(s):
+            m = Chem.MolFromSmiles(s)
+            fp = AllChem.GetMorganFingerprintAsBitVect(m, 2, 2048)
+            f = np.zeros((2048,)); DataStructs.ConvertToNumpyArray(fp, f)
+            d = [Descriptors.MolWt(m), Descriptors.MolLogP(m), Descriptors.TPSA(m), Descriptors.NumHDonors(m), Descriptors.NumHAcceptors(m), Descriptors.NumRotatableBonds(m), Descriptors.RingCount(m), Descriptors.NumAromaticRings(m), Descriptors.HeavyAtomCount(m), Descriptors.FractionCSP3(m), 0.0, 0.0]
+            return f, np.array(d, dtype=np.float32)
 
-@st.cache_data
-def safe_extract_scaffold(smiles):
-    """Safely extract Murcko Scaffold and return mol object."""
-    try:
-        mol = Chem.MolFromSmiles(smiles)
-        if not mol: return None
-        return MurckoScaffold.GetScaffoldForMol(mol)
-    except Exception:
-        return None
+        f1, d1 = get_v(sa); f2, d2 = get_v(sb)
+        feats = np.concatenate([f1, f2, d1, d2]).reshape(1, -1)
+        probs = model_data['model'].predict_proba(feats)[0] if model_data else [0.0]
+        classes = model_data.get('class_names', ["Unknown"]) if model_data else ["Error"]
+        sorted_preds = sorted(zip(classes, probs), key=lambda x: x[1], reverse=True)
+        top_pred, mcs, sim_score = sorted_preds[0], rdFMCS.FindMCS([m1, m2], timeout=3), get_tanimoto_similarity(m1, m2)
+        d_a, d_b = get_safe_descriptors(sa), get_safe_descriptors(sb)
+        sig_a, sig_b = get_pharmacological_signals(sa), get_pharmacological_signals(sb)
 
-# ==========================================
-# 📱 HERO INTERFACE (LIVE PREVIEW)
-# ==========================================
+    st.markdown("<div class='result-container'>", unsafe_allow_html=True)
+    head_col1, head_col2 = st.columns([4, 1])
+    with head_col1:
+        st.markdown(f"<div style='color:#7469B6; font-size:2.5rem; font-weight:800;'>Interaction Profile Analysis</div>", unsafe_allow_html=True)
+        st.markdown(f"<div style='color:#AD88C6; font-weight:600; margin-bottom:2rem;'>REPORT ID: {datetime.now().strftime('%Y%m%d')}-{abs(hash(sa))%1000}</div>", unsafe_allow_html=True)
+    with head_col2:
+        st.markdown("<div class='back-btn'>", unsafe_allow_html=True)
+        if st.button("← NEW PROTOCOL", on_click=switch_to_input): pass
+        st.markdown("</div>", unsafe_allow_html=True)
 
-st.markdown("<div class='hero-title'>Drug Interaction Predictor</div>", unsafe_allow_html=True)
-st.markdown("<div class='hero-subtitle'>A biomedical research dashboard for molecular interaction analysis</div>", unsafe_allow_html=True)
+    st.markdown(f"""
+    <div class='accent-card' style='text-align:center; margin-bottom:3rem;'>
+        <div style='font-size:0.9rem; font-weight:700; text-transform:uppercase; opacity:0.8;'>Target Prediction</div>
+        <div class='pred-label'>{top_pred[0]}</div>
+        <div class='conf-badge' style='display:inline-block;'>Confidence: {top_pred[1]*100:.2f}%</div>
+    </div>
+    """, unsafe_allow_html=True)
 
-with st.container():
-    col1, col2 = st.columns(2)
-    with col1:
-        st.markdown("<label class='input-label'>Enter SMILES A</label>", unsafe_allow_html=True)
-        smi_a = st.text_input("", key="smi_a", label_visibility="collapsed")
-        if smi_a:
-            mol_a = Chem.MolFromSmiles(smi_a)
-            if mol_a:
-                img_a = generate_mol_preview(smi_a)
-                st.markdown(f"<div class='app-card card-cream' style='padding:1rem;'><div class='vis-frame'><img src='data:image/png;base64,{img_a}' width='100%'></div></div>", unsafe_allow_html=True)
-            else:
-                st.markdown("<div class='app-card card-pink' style='color:#9f1239; text-align:center; font-weight:800;'>⚠ Invalid SMILES A</div>", unsafe_allow_html=True)
-        else:
-            st.markdown("<div class='app-card' style='background:#ffffff; text-align:center; height:200px; display:flex; align-items:center; justify-content:center; color:#334155; font-weight:600; border:2px dashed #e2e8f0;'>Enter a SMILES string to preview structure</div>", unsafe_allow_html=True)
-            
-    with col2:
-        st.markdown("<label class='input-label'>Enter SMILES B</label>", unsafe_allow_html=True)
-        smi_b = st.text_input("", key="smi_b", label_visibility="collapsed")
-        if smi_b:
-            mol_b = Chem.MolFromSmiles(smi_b)
-            if mol_b:
-                img_b = generate_mol_preview(smi_b)
-                st.markdown(f"<div class='app-card card-cream' style='padding:1rem;'><div class='vis-frame'><img src='data:image/png;base64,{img_b}' width='100%'></div></div>", unsafe_allow_html=True)
-            else:
-                st.markdown("<div class='app-card card-pink' style='color:#9f1239; text-align:center; font-weight:800;'>⚠ Invalid SMILES B</div>", unsafe_allow_html=True)
-        else:
-            st.markdown("<div class='app-card' style='background:#ffffff; text-align:center; height:200px; display:flex; align-items:center; justify-content:center; color:#334155; font-weight:600; border:2px dashed #e2e8f0;'>Enter a SMILES string to preview structure</div>", unsafe_allow_html=True)
-
-st.markdown("<br>", unsafe_allow_html=True)
-analyze_btn = st.button("Analyze Interaction Pipeline")
-
-# ==========================================
-# 💠 WELLNESS DASHBOARD (RESULTS)
-# ==========================================
-
-if analyze_btn:
-    if not smi_a or not smi_b or not Chem.MolFromSmiles(smi_a) or not Chem.MolFromSmiles(smi_b):
-        st.error("Protocol Incomplete: Structurally valid SMILES strings are required for full analysis.")
-        st.stop()
-    
-    with st.spinner("Decoding Molecular Interaction Patterns..."):
-        model_data = get_main_model()
-        
-        # 4120 Feature Extraction
-        def get_features_4120(s1, s2):
-            def v(s):
-                m = Chem.MolFromSmiles(s)
-                fp = AllChem.GetMorganFingerprintAsBitVect(m, 2, 2048)
-                f = np.zeros((2048,))
-                DataStructs.ConvertToNumpyArray(fp, f)
-                try:
-                    AllChem.ComputeGasteigerCharges(m)
-                    c = [a.GetDoubleProp("_GasteigerCharge") for a in m.GetAtoms()]
-                except:
-                    c = [0.0] * m.GetNumAtoms()
-                d = [Descriptors.MolWt(m), Descriptors.MolLogP(m), Descriptors.TPSA(m), Descriptors.NumHDonors(m), Descriptors.NumHAcceptors(m), Descriptors.NumRotatableBonds(m), Descriptors.RingCount(m), Descriptors.NumAromaticRings(m), Descriptors.HeavyAtomCount(m), Descriptors.FractionCSP3(m), max(c) if c else 0.0, min(c) if c else 0.0]
-                return f, np.array(d, dtype=np.float32)
-            f1, d1 = v(s1); f2, d2 = v(s2)
-            return np.concatenate([f1, f2, d1, d2]).reshape(1, -1)
-
-        feats = get_features_4120(smi_a, smi_b)
-        probs = model_data['model'].predict_proba(feats)[0]
-        classes = model_data.get('class_names', model_data.get('label_encoder').classes_ if 'label_encoder' in model_data else [])
-        pairs = sorted(zip(classes, probs), key=lambda x: x[1], reverse=True)
-        
-        # 1. HERO PREDICTION
-        st.markdown(f"""
-        <div class='app-card card-pink' style='text-align:center;'>
-            <div class='section-title' style='justify-content:center;'>Primary Interaction Prediction</div>
-            <div class='prediction-val'>{pairs[0][0]}</div>
-            <div class='confidence-val'>Confidence: {pairs[0][1]*100:.2f}%</div>
+    st.markdown(f"""
+    <div class='research-card'>
+        <div style='color:#7469B6; font-weight:800; font-size:1.2rem; margin-bottom:1.5rem;'>STRUCTURAL EVIDENCE & GNN METRICS</div>
+        <div style='display:grid; grid-template-columns: 1fr 1fr 1fr; gap:20px; text-align:center;'>
+            <div style='border-right:1px solid #FDF0F0;'>
+                <div class='descriptor-label'>Similarity</div>
+                <div class='descriptor-val' style='font-size:1.8rem;'>{sim_score:.3f}</div>
+            </div>
+            <div style='border-right:1px solid #FDF0F0;'>
+                <div class='descriptor-label'>MCS Atoms</div>
+                <div class='descriptor-val' style='font-size:1.8rem;'>{mcs.numAtoms}</div>
+            </div>
+            <div>
+                <div class='descriptor-label'>Backend State</div>
+                <div class='descriptor-val' style='font-size:1rem; margin-top:0.5rem;'>{ "Ready (Torch)" if TORCH_AVAILABLE else "Structural Mode" }</div>
+            </div>
         </div>
-        """, unsafe_allow_html=True)
-        
-        # 2. PROBABILITY DISTRIBUTION
-        st.markdown("<div class='app-card card-lavender'>", unsafe_allow_html=True)
-        st.markdown("<div class='section-title'>Probability Distribution Profile</div>", unsafe_allow_html=True)
-        df_p = pd.DataFrame(pairs, columns=["Category", "Weight"])
-        df_p["Weight"] = df_p["Weight"].map(lambda x: f"{x*100:.2f}%")
-        st.table(df_p)
-        st.markdown("</div>", unsafe_allow_html=True)
+        {f'<div class="status-chip" style="background:#FFF3CD; color:#856404; border:1px solid #FFEEBA; width:100%; justify-content:center; margin-top:1.5rem;">⚠️ Torch backend unavailable, running in structural fallback mode.</div>' if not TORCH_AVAILABLE else ''}
+    </div>
+    """, unsafe_allow_html=True)
 
-        # 3. MOLECULE COMPARISON + 4. MCS Analysis
-        m1_obj = Chem.MolFromSmiles(smi_a)
-        m2_obj = Chem.MolFromSmiles(smi_b)
-        mcs = rdFMCS.FindMCS([m1_obj, m2_obj], timeout=5)
-        m_col1, m_col2 = st.columns(2)
-        with m_col1:
-            im_a = generate_mol_preview(smi_a, m1_obj.GetSubstructMatch(Chem.MolFromSmarts(mcs.smartsString)) if mcs.numAtoms else None)
-            st.markdown(f"<div class='app-card card-cream' style='padding:1rem;'><div class='section-title' style='font-size:0.9rem;'>Molecule A Core</div><div class='vis-frame'><img src='data:image/png;base64,{im_a}' width='100%'></div></div>", unsafe_allow_html=True)
-        with m_col2:
-            im_b = generate_mol_preview(smi_b, m2_obj.GetSubstructMatch(Chem.MolFromSmarts(mcs.smartsString)) if mcs.numAtoms else None)
-            st.markdown(f"<div class='app-card card-cream' style='padding:1rem;'><div class='section-title' style='font-size:0.9rem;'>Molecule B Core</div><div class='vis-frame'><img src='data:image/png;base64,{im_b}' width='100%'></div></div>", unsafe_allow_html=True)
-            
-        st.markdown("<div class='app-card card-mint'>", unsafe_allow_html=True)
-        st.markdown("<div class='section-title'>Maximum Common Substructure (MCS)</div>", unsafe_allow_html=True)
-        if mcs.numAtoms:
-            st.markdown(f"<div style='background:rgba(255,255,255,0.8); padding:1rem; border-radius:15px; font-family:monospace; margin-bottom:1rem; color:#0f172a; border:1px solid #d1fae5; font-weight:700;'>{mcs.smartsString}</div>", unsafe_allow_html=True)
-            st.markdown(f"<div style='color:#065f46; font-weight:700;'>Verified overlap: {mcs.numAtoms} unique heavy atoms identified.</div>", unsafe_allow_html=True)
-        else:
-            st.markdown("<div style='color:#991b1b; font-weight:700;'>No significant common heavy-atom scaffolding found.</div>", unsafe_allow_html=True)
-        st.markdown("</div>", unsafe_allow_html=True)
+    m_col1, m_col2 = st.columns(2)
+    def render_p(mol, smi, title, signals):
+        h = mol.GetSubstructMatch(Chem.MolFromSmarts(mcs.smartsString)) if mcs.numAtoms else None
+        img = draw_mol_clean(smi, h)
+        sigs_html = ' '.join([f'<span class="signal-pill">{s}</span>' for s in signals])
+        st.markdown(f"<div class='research-card'><div class='descriptor-label' style='margin-bottom:1rem;'>{title} Profile</div><div class='mol-frame'><img src='data:image/png;base64,{img}' width='100%'></div><div style='margin-top:1rem;'>{sigs_html}</div></div>", unsafe_allow_html=True)
+    with m_col1: render_p(m1, sa, "Compound A", sig_a)
+    with m_col2: render_p(m2, sb, "Compound B", sig_b)
 
-        # 5. GRAPH REPRESENTATION
-        st.markdown("<div class='app-card card-blue'>", unsafe_allow_html=True)
-        st.markdown("<div class='section-title'>Graph-Based Structural Representation</div>", unsafe_allow_html=True)
-        gcol1, gcol2 = st.columns(2)
-        with gcol1:
-            gimg_a = render_structural_graph(smi_a)
-            st.markdown(f"<div class='vis-frame' style='background:white;'><img src='data:image/png;base64,{gimg_a}' width='100%'></div>", unsafe_allow_html=True)
-            st.caption("Topological Map A")
-        with gcol2:
-            gimg_b = render_structural_graph(smi_b)
-            st.markdown(f"<div class='vis-frame' style='background:white;'><img src='data:image/png;base64,{gimg_b}' width='100%'></div>", unsafe_allow_html=True)
-            st.caption("Topological Map B")
-        st.markdown("</div>", unsafe_allow_html=True)
+    st.markdown(f"""
+    <div class='research-card'>
+        <div style='color:#7469B6; font-weight:800; font-size:1.2rem; margin-bottom:1.5rem;'>INTERPRETATION & RATIONALE</div>
+        <div style='display:grid; grid-template-columns: 1fr 1fr; gap:30px;'>
+            <div style='border-left:4px solid #7469B6; padding-left:15px;'>
+                <div style='font-weight:700; color:#2D3436; margin-bottom:5px;'>Structural Evidence</div>
+                <ul style="font-size:0.9rem; color:#4E5D6C;"><li>Conserved core of <strong>{mcs.numAtoms} atoms</strong>.</li><li>Tanimoto similarity: <strong>{sim_score:.2f}</strong>.</li></ul>
+            </div>
+            <div style='border-left:4px solid #AD88C6; padding-left:15px;'>
+                <div style='font-weight:700; color:#2D3436; margin-bottom:5px;'>Metabolic Proxy</div>
+                <div style='font-size:0.9rem; color:#4E5D6C;'>Similarity of {sim_score*100:.1f}% indicates structural kinship.</div>
+            </div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
 
-        # 6. MOLECULAR DESCRIPTOR PANEL
-        st.markdown("<div class='app-card card-cream'>", unsafe_allow_html=True)
-        st.markdown("<div class='section-title'>Molecular Descriptor Comparison</div>", unsafe_allow_html=True)
-        d1, d2 = analyze_molecule_properties(smi_a), analyze_molecule_properties(smi_b)
-        df_d = pd.DataFrame([d1, d2], index=["Compound A", "Compound B"]).T
-        st.table(df_d)
-        st.markdown("</div>", unsafe_allow_html=True)
+    st.markdown("<div style='color:#7469B6; font-weight:800; font-size:1.2rem; margin:2rem 0 1.5rem 0;'>DESCRIPTOR COMPARISON</div>", unsafe_allow_html=True)
+    d_col1, d_col2 = st.columns(2)
+    def render_d(data, title):
+        if not data: st.markdown("<div class='research-card'>Data Unavailable</div>", unsafe_allow_html=True); return
+        bars = ""
+        for k, v, mx, lbl in [("MW", data['MW'], 800, "Molecular Weight"), ("LogP", data['LogP'], 8, "Lipophilicity"), ("TPSA", data['TPSA'], 200, "TPSA")]:
+            p = min(100, (v/mx)*100 if mx > 0 else 0)
+            bars += f"<div class='descriptor-label'>{lbl}</div><div class='bar-container'><div class='bar-fill' style='width:{p}%;'></div></div>"
+        st.markdown(f"<div class='research-card'><div style='font-weight:800; color:#7469B6; margin-bottom:1.5rem;'>{title}</div>{bars}</div>", unsafe_allow_html=True)
+    with d_col1: render_d(d_a, "Compound A")
+    with d_col2: render_d(d_b, "Compound B")
 
-        # 7-12. SIMILARITY & SCAFFOLD
-        st.markdown("<div class='app-card card-lavender'>", unsafe_allow_html=True)
-        st.markdown("<div class='section-title'>Similarity & Scaffold Analytics</div>", unsafe_allow_html=True)
-        
-        # Calculations
-        fp1 = AllChem.GetMorganFingerprintAsBitVect(m1_obj, 2)
-        fp2 = AllChem.GetMorganFingerprintAsBitVect(m2_obj, 2)
-        sim_val = DataStructs.TanimotoSimilarity(fp1, fp2)
-        
-        scaf_a = safe_extract_scaffold(smi_a)
-        scaf_b = safe_extract_scaffold(smi_b)
-        
-        scaf_sim = None
-        if scaf_a and scaf_b:
-            try:
-                fps1 = AllChem.GetMorganFingerprintAsBitVect(scaf_a, 2)
-                fps2 = AllChem.GetMorganFingerprintAsBitVect(scaf_b, 2)
-                scaf_sim = DataStructs.TanimotoSimilarity(fps1, fps2)
-            except: pass
-        
-        sim_col1, sim_col2 = st.columns(2)
-        with sim_col1:
-            st.markdown(f"<div style='font-size:2.5rem; font-weight:800; color:#1e3a8a;'>{sim_val:.4f}</div>", unsafe_allow_html=True)
-            st.markdown("<div style='color:#334155; font-weight:700;'>Tanimoto Similarity (Molecule)</div>", unsafe_allow_html=True)
-        with sim_col2:
-            if scaf_sim is not None:
-                st.markdown(f"<div style='font-size:2.5rem; font-weight:800; color:#4338ca;'>{scaf_sim:.4f}</div>", unsafe_allow_html=True)
-                st.markdown("<div style='color:#334155; font-weight:700;'>Murcko Scaffold Similarity</div>", unsafe_allow_html=True)
-            else:
-                st.markdown(f"<div style='font-size:1.5rem; font-weight:800; color:#991b1b;'>Not Available</div>", unsafe_allow_html=True)
-                st.markdown("<div style='color:#334155; font-weight:700;'>Murcko Scaffold Similarity</div>", unsafe_allow_html=True)
-        
-        # Scaffold Visualization
-        if scaf_a or scaf_b:
-            st.markdown("<br>", unsafe_allow_html=True)
-            vscaf1, vscaf2 = st.columns(2)
-            with vscaf1:
-                if scaf_a:
-                    img_scaf_a = base64.b64encode(Draw.MolToImage(scaf_a).tobytes()).decode()
-                    # Using MolToImage instead of MolDraw2DCairo for simpler safe rendering in this loop
-                    buf = BytesIO()
-                    Draw.MolToImage(scaf_a).save(buf, format="PNG")
-                    img_data = base64.b64encode(buf.getvalue()).decode()
-                    st.markdown(f"<div class='vis-frame' style='background:white;'><img src='data:image/png;base64,{img_data}' width='100%'></div>", unsafe_allow_html=True)
-                    st.caption("Murcko Scaffold A")
-            with vscaf2:
-                if scaf_b:
-                    buf = BytesIO()
-                    Draw.MolToImage(scaf_b).save(buf, format="PNG")
-                    img_data = base64.b64encode(buf.getvalue()).decode()
-                    st.markdown(f"<div class='vis-frame' style='background:white;'><img src='data:image/png;base64,{img_data}' width='100%'></div>", unsafe_allow_html=True)
-                    st.caption("Murcko Scaffold B")
-                    
-        st.markdown("</div>", unsafe_allow_html=True)
-        
-        # Processing Status
-        st.markdown("<div class='app-card card-mint'>", unsafe_allow_html=True)
-        st.markdown("<div class='section-title'>Processing Statistics</div>", unsafe_allow_html=True)
-        pcol1, pcol2 = st.columns(2)
-        with pcol1:
-            for status in ["Scaffold Extraction", "RDKit Parsing", "Graph Map", "Inference"]:
-                st.markdown(f"<span class='status-pill' style='color:#065f46; background:#dcfce7;'>✓ {status}</span>", unsafe_allow_html=True)
-        with pcol2:
-            st.markdown(f"<div style='color:#0f172a; font-weight:800;'>Technical Logs</div>", unsafe_allow_html=True)
-            st.markdown(f"<div style='color:#334155; font-weight:600; font-size:0.8rem;'>Protocol: research.v4120<br>Engine: bio-inference.proc<br>Timestamp: {datetime.now().strftime('%H:%M:%S')}</div>", unsafe_allow_html=True)
-        st.markdown("</div>", unsafe_allow_html=True)
+    st.markdown("<div style='color:#7469B6; font-weight:800; font-size:1.2rem; margin:2rem 0 1.5rem 0;'>TOPOLOGICAL GRAPH ANALYTICS</div>", unsafe_allow_html=True)
+    g_col1, g_col2 = st.columns(2)
+    def render_g(smi, title):
+        img, met = render_topo_graph(smi)
+        st.markdown(f"<div class='research-card'><div style='font-weight:800; color:#7469B6; margin-bottom:1rem;'>{title} Graph</div><div class='mol-frame' style='background:white;'><img src='data:image/png;base64,{img}' width='100%'></div><div style='display:grid; grid-template-columns: 1fr 1fr; gap:10px; margin-top:1.5rem;'><div><div class='descriptor-label'>Nodes</div><div class='descriptor-val'>{met['nodes']}</div></div><div><div class='descriptor-label'>Edges</div><div class='descriptor-val'>{met['edges']}</div></div></div></div>", unsafe_allow_html=True)
+    with g_col1: render_g(sa, "Compound A")
+    with g_col2: render_g(sb, "Compound B")
 
-        # Scientific Notes
-        st.markdown("<div class='app-card card-blue'>", unsafe_allow_html=True)
-        st.markdown("<div class='section-title'>Structural Interpretation Notes</div>", unsafe_allow_html=True)
-        notes = []
-        if sim_val > 0.4: notes.append("Shared molecular fingerprints indicate overlapping chemical environments.")
-        if mcs.numAtoms > 10: notes.append("Robust common scaffold isolated; metabolic pathway similarity is plausible.")
-        if scaf_sim is not None and scaf_sim > 0.7: notes.append("High scaffold overlap suggests direct structural analogs.")
-        if not notes: notes.append("Prediction derived from distributed chemical environment descriptors.")
-        for nt in notes: 
-            st.markdown(f"<div class='note-box' style='color:#1e293b; font-weight:500;'>🧬 {nt}</div>", unsafe_allow_html=True)
-        st.markdown("</div>", unsafe_allow_html=True)
+    st.markdown("<div style='display:flex; justify-content:center; gap:20px; margin: 3rem 0;'>", unsafe_allow_html=True)
+    st.download_button("EXPORT JSON", data=json.dumps(top_pred[0]), file_name="DDI.json")
+    st.download_button("EXPORT CSV", data=pd.DataFrame(sorted_preds).to_csv(), file_name="DDI.csv")
+    st.markdown("</div></div>", unsafe_allow_html=True)
 
-        # Export
-        st.markdown("<div style='display:flex; justify-content:center; gap:1.5rem; margin-bottom: 4rem;'>", unsafe_allow_html=True)
-        st.download_button("Export Report (JSON)", data=json.dumps({"smi_a": smi_a, "smi_b": smi_b, "prediction": pairs[0][0]}, indent=2), file_name="DDI_Report.json", mime="application/json")
-        st.download_button("Export Data (CSV)", data=df_p.to_csv().encode('utf-8'), file_name="Structural_Analysis.csv", mime="text/csv")
-        st.markdown("</div>", unsafe_allow_html=True)
-
-st.markdown("<div style='text-align: center; color: #64748b; margin-top: 2rem; font-size: 0.9rem; font-weight: 700;'>DrugLens Biomedical | Research Intelligence Platform v3.1</div>", unsafe_allow_html=True)
+st.markdown("<div style='text-align: center; color: #AD88C6; margin: 5rem 0 3rem 0; font-size: 0.9rem; font-weight: 700; opacity:0.6;'>DrugLens Pro | v5.1 Stable Research Platform</div>", unsafe_allow_html=True)
