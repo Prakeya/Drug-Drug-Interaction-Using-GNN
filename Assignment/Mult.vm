@@ -1,0 +1,30 @@
+function Mult.mult 2   // 2 local variables: sum, n
+
+push constant 0
+pop local 0        // sum = 0
+
+push constant 1
+pop local 1        // n = 1
+
+label LOOP
+
+push local 1       // n
+push argument 1    // y
+gt
+if-goto END
+
+push local 0       // sum
+push argument 0    // x
+add
+pop local 0        // sum += x
+
+push local 1
+push constant 1
+add
+pop local 1        // n++
+
+goto LOOP
+
+label END
+push local 0
+return

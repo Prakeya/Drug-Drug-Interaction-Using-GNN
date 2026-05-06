@@ -1,0 +1,37 @@
+push constant 0
+pop static 1
+
+push constant 1
+pop static 2
+
+push constant 0
+pop static 5
+
+push constant 6
+pop static 6
+label LOOP
+
+push static 5
+push static 6
+eq
+if-goto END
+
+push static 1
+push static 2
+add
+pop static 3
+
+push static 2
+pop static 1
+
+push static 3
+pop static 2
+
+push static 5
+push constant 1
+add
+pop static 5
+
+goto LOOP
+
+label END

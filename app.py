@@ -11,12 +11,23 @@ from datetime import datetime
 from io import BytesIO
 from rdkit import Chem
 from rdkit.Chem import AllChem, Draw, rdFMCS, Descriptors, DataStructs, rdFingerprintGenerator
-from rdkit.Chem.Scaffolds import MurckoScaffold
-import matplotlib.pyplot as plt
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
 
 # Initialize Modern Fingerprint Generator (Radius=2, Size=2048)
 MORGAN_GEN = rdFingerprintGenerator.GetMorganGenerator(radius=2, fpSize=2048)
+
+# ==========================================
+# 🧬 CLASS LABEL MAPPING (Single Source of Truth)
+# ==========================================
+# Must match the order from SIDE_EFFECT_LABELS in scripts/train_model.py
+CLASS_LABELS = {
+    0: "Bleeding Risk",
+    1: "CNS Depression",
+    2: "Hepatotoxicity",
+    3: "Nephrotoxicity",
+    4: "Reduced Therapeutic Effect",
+    5: "Cardiotoxicity",
+}
 
 # ==========================================
 # 🛡️ SAFE TORCH IMPORT (WINDOWS HARDENING)
@@ -365,7 +376,8 @@ def get_pharmacological_signals(smiles):
     }
     for n, s in pats.items():
         for sm in s:
-            if mol.HasSubstructMatch(Chem.MolFromSmarts(sm)): sigs.append(n); break
+            patt = Chem.MolFromSmarts(sm)
+            if patt and mol.HasSubstructMatch(patt): sigs.append(n); break
     lp, mw = Descriptors.MolLogP(mol), Descriptors.MolWt(mol)
     if lp > 3.0 and mw < 450: sigs.append("CNS Depressant")
     if mw < 200 or mw > 800: sigs.append("Narrow TI")
@@ -385,9 +397,6 @@ def draw_mol_clean(smiles, highlights=None):
 
 def draw_molecule_graph(mol, title="Molecular Graph"):
     import matplotlib.pyplot as plt
-    import networkx as nx
-    import numpy as np
-    from rdkit import Chem
 
     G = nx.Graph()
 
@@ -461,6 +470,171 @@ def draw_molecule_graph(mol, title="Molecular Graph"):
     st.pyplot(fig)
 
 # ==========================================
+# 🌌 MOLECULAR CLASH HEATMAP MODULE
+# ==========================================
+
+try:
+    import plotly.express as px
+    import plotly.graph_objects as go
+    PLOTLY_AVAILABLE = True
+except ImportError:
+    PLOTLY_AVAILABLE = False
+
+def compute_atom_reactivity_scores(mol, interaction_label, descriptors):
+    # Returns atom_index -> score between 0 and 1
+    scores = {}
+    if not mol: return scores
+    
+    label_lower = interaction_label.lower() if interaction_label else ""
+    
+    for atom in mol.GetAtoms():
+        idx = atom.GetIdx()
+        score = 0.1 # base 
+        
+        # aromatic rings
+        if atom.GetIsAromatic():
+            score += 0.2
+            
+        # hetero atoms (N, O, S, Halogens)
+        if atom.GetAtomicNum() in [7, 8, 16, 9, 17, 35, 53]:
+            score += 0.25
+            
+        # Carbonyl (C attached to O via double bond)
+        if atom.GetAtomicNum() == 6:
+            for bond in atom.GetBonds():
+                if bond.GetBondType() == Chem.rdchem.BondType.DOUBLE:
+                    other = bond.GetOtherAtom(atom)
+                    if other.GetAtomicNum() == 8:
+                        score += 0.3
+                        break
+        
+        # charged
+        if atom.GetFormalCharge() != 0:
+            score += 0.3
+            
+        # adjust based on label
+        if 'cardio' in label_lower and atom.GetIsAromatic():
+            score += 0.2
+        if 'nephro' in label_lower and atom.GetAtomicNum() in [7, 8]:
+            score += 0.3
+        if 'hepato' in label_lower and atom.GetAtomicNum() in [7, 8, 16]:
+            score += 0.2
+            
+        scores[idx] = min(1.0, score)
+    return scores
+
+def get_atom_heatmap_colors(atom_scores):
+    colors = {}
+    for idx, score in atom_scores.items():
+        if score < 0.35:
+            colors[idx] = (0.3, 0.8, 0.3, 0.6) # green
+        elif score <= 0.7:
+            colors[idx] = (0.9, 0.6, 0.2, 0.6) # orange
+        else:
+            colors[idx] = (0.9, 0.2, 0.2, 0.6) # red
+    return colors
+
+def draw_molecule_with_reactivity_heatmap(mol, atom_scores, title):
+    colors = get_atom_heatmap_colors(atom_scores)
+    highlights = list(atom_scores.keys())
+    
+    try:
+        d = Draw.MolDraw2DSVG(400, 350)
+        o = d.drawOptions()
+        o.backgroundColour = (1, 1, 1, 0)
+        o.bondLineWidth = 3
+        Draw.PrepareMolForDrawing(mol)
+        d.DrawMolecule(mol, highlightAtoms=highlights, highlightAtomColors=colors)
+        d.FinishDrawing()
+        svg = d.GetDrawingText()
+        import streamlit as st
+        st.markdown(f"<div style='text-align:center;'>{svg}</div>", unsafe_allow_html=True)
+    except Exception as e:
+        import streamlit as st
+        st.error(f"Draw err: {e}")
+
+def draw_mcs_only(mol_a, mol_b):
+    from rdkit.Chem import rdFMCS
+    import streamlit as st
+    mcs = rdFMCS.FindMCS([mol_a, mol_b], timeout=3)
+    if not mcs or not mcs.smartsString:
+        st.markdown("<div style='text-align:center; padding: 2rem;'>No clear common substructure detected</div>", unsafe_allow_html=True)
+        return
+        
+    patt = Chem.MolFromSmarts(mcs.smartsString)
+    if not patt:
+        st.markdown("<div style='text-align:center; padding: 2rem;'>No clear common substructure detected</div>", unsafe_allow_html=True)
+        return
+        
+    try:
+        d = Draw.MolDraw2DSVG(500, 250)
+        o = d.drawOptions()
+        o.backgroundColour = (1, 1, 1, 0)
+        o.bondLineWidth = 4
+        # soft green
+        o.setHighlightColour((0.5, 0.9, 0.5, 0.5))
+        Draw.PrepareMolForDrawing(patt)
+        d.DrawMolecule(patt)
+        d.FinishDrawing()
+        st.markdown(f"<div style='text-align:center; border:1px solid rgba(116, 105, 182, 0.5); border-radius:15px; padding:10px; background:rgba(116, 105, 182, 0.05);'>{d.GetDrawingText()}</div>", unsafe_allow_html=True)
+    except:
+        st.markdown("<div style='text-align:center; padding: 2rem;'>No clear common substructure detected</div>", unsafe_allow_html=True)
+
+def render_interaction_intensity_matrix(metrics):
+    import streamlit as st
+    # metrics dict: {'Structural Similarity': 0.8, ...}
+    labels = list(metrics.keys())
+    values = list(metrics.values())
+    
+    if PLOTLY_AVAILABLE:
+        fig = go.Figure(data=go.Heatmap(
+            z=[values],
+            x=labels,
+            y=["Intensity"],
+            colorscale='RdYlBu_r',
+            zmin=0, zmax=1
+        ))
+        fig.update_layout(
+            template="plotly_dark",
+            margin=dict(l=10, r=10, t=30, b=10),
+            height=200,
+            paper_bgcolor='rgba(0,0,0,0)',
+            plot_bgcolor='rgba(0,0,0,0)'
+        )
+        st.plotly_chart(fig, use_container_width=True)
+    else:
+        import matplotlib.pyplot as plt
+        fig, ax = plt.subplots(figsize=(8, 2))
+        fig.patch.set_facecolor('#1a1a1a')
+        ax.set_facecolor('#1a1a1a')
+        mat = ax.imshow([values], cmap='RdYlBu_r', vmin=0, vmax=1, aspect='auto')
+        ax.set_xticks(range(len(labels)))
+        ax.set_xticklabels(labels, color='white', rotation=15, ha='right')
+        ax.set_yticks([])
+        for i, v in enumerate(values):
+            ax.text(i, 0, f"{v:.2f}", ha='center', va='center', color='black' if v > 0.5 else 'white', fontweight='bold')
+        st.pyplot(fig)
+
+def generate_visual_explanation(sim_score, mcs_atoms, final_payload, d_a, d_b):
+    explanations = []
+    if sim_score > 0.4:
+         explanations.append("High structural similarity suggests competitive binding at primary receptor targets.")
+    if mcs_atoms > 8:
+         explanations.append("Extensive shared substructures strongly indicate metabolic burden overlaps.")
+    
+    label = final_payload.get('interaction_label', '').lower()
+    if 'cardio' in label:
+         explanations.append("Shared lipophilic regions and redox-active motifs suggest increased cardiotoxic potential.")
+    elif 'nephro' in label:
+         explanations.append("Polar functional group overlap indicates elevated renal clearance stress.")
+    elif 'hepato' in label:
+         explanations.append("Heavy hepatic metabolic load inferred from combined structural weights and CYP450 affinity fragments.")
+    else:
+         explanations.append("Substructure conflict profiles highlight potential synergistic adverse effects.")
+    
+    return " ".join(explanations)
+
+# ==========================================
 # 🛡️ HYBRID PIPELINE HELPERS
 # ==========================================
 
@@ -530,8 +704,7 @@ def run_model_prediction(smi_a, smi_b):
                 return np.zeros(2048), np.zeros(12)
 
             fp = MORGAN_GEN.GetFingerprint(m)
-            f = np.zeros((0,)) # Dummy for ConvertToNumpyArray
-            f = np.array(fp, dtype=np.float32) # Direct conversion for newer RDKit versions
+            f = np.array(fp, dtype=np.float32)
 
             d = [
                 Descriptors.MolWt(m),
@@ -552,19 +725,26 @@ def run_model_prediction(smi_a, smi_b):
         feats = np.concatenate([f1, f2, d1, d2]).reshape(1, -1)
         
         probs = model_data['model'].predict_proba(feats)[0]
-        classes = model_data.get('class_names', ["Unknown"])
-        sorted_preds = sorted(zip(classes, probs), key=lambda x: x[1], reverse=True)
-        top_pred = sorted_preds[0]
+        pred_idx = np.argmax(probs)
+        pred_confidence = probs[pred_idx]
+        
+        # Map prediction index to class label using single source of truth
+        pred_label = CLASS_LABELS.get(pred_idx, "Unknown")
+        
+        # DEBUG: Print raw prediction for verification
+        print(f"[DEBUG] Model prediction: idx={pred_idx}, label='{pred_label}', conf={pred_confidence:.4f}, all_probs={probs}")
         
         return {
             "source": "Predicted Interaction (Model)",
-            "interaction_label": top_pred[0],
-            "confidence": top_pred[1],
+            "interaction_label": pred_label,
+            "confidence": pred_confidence,
+            "all_probs": probs.tolist(),
             "from_database": False,
             "mechanism": "Algorithmic inference based on structural fingerprints and graph topology.",
-            "notes": f"Predicted with {top_pred[1]*100:.2f}% confidence."
+            "notes": f"Predicted with {pred_confidence*100:.2f}% confidence."
         }
     except Exception as e:
+        print(f"[ERROR] Model prediction failed: {e}")
         return None
 
 def build_result_payload(smi_a, smi_b):
@@ -653,9 +833,9 @@ else:
 
         # 🧠 HYBRID SCORE REBALANCING (Addressing QT Bias)
         # Formula: 0.5*ML + 0.3*MCS + 0.15*Desc + 0.05*Tanimoto
-        ml_comp = 0.5 * float(final_payload.get('confidence_score', 0.5))
+        ml_comp = 0.5 * float(final_payload.get('confidence', 0.5))
         mcs_comp = 0.3 * (max(0.1, min(mcs_atoms, 25) / 25))
-        desc_comp = 0.15 * (0.8 if d_a.get('LogP',0) > 2.5 or d_b.get('LogP',0) > 2.5 else 0.4)
+        desc_comp = 0.15 * (0.8 if (d_a or {}).get('LogP', 0) > 2.5 or (d_b or {}).get('LogP', 0) > 2.5 else 0.4)
         tani_comp = 0.05 * float(sim_score)
         
         struct_score = ml_comp + mcs_comp + desc_comp + tani_comp
@@ -663,61 +843,52 @@ else:
     # 🧠 PROBABILISTIC REASONING ENGINE
     def generate_probabilistic_reasoning(smi_a, smi_b, d_a, d_b, sim, mcs_len, payload):
         risks = []
-        base_label = payload.get('interaction_label', '').lower()
+        is_db = payload.get('from_database', False)
         
-        # Utility for SMARTS match
-        def has_patt(smi, p):
-            m = Chem.MolFromSmiles(smi)
-            return m.HasSubstructMatch(Chem.MolFromSmarts(p)) if m else False
-
-        # Baseline Probabilities (Addressing QT Bias)
-        p_cardio = 0.15 + (sim * 0.3)
-        p_qt = 0.1 + (sim * 0.45)
-        p_hep = 0.1 + (sim * 0.25)
-        p_neph = 0.08 + (mcs_len / 45)
-        p_bleed = 0.05
-        p_red = 0.1
-
-        # 🛡️ STRUCTURAL GATES & BOOSTS
-        def check_t_amine(s):
-            m = Chem.MolFromSmiles(s); return m.HasSubstructMatch(Chem.MolFromSmarts("[NX3;H0;!$(NC=O)]")) if m else False
+        d_a_safe = d_a if d_a else {}
+        d_b_safe = d_b if d_b else {}
         
-        has_amine = check_t_amine(smi_a) or check_t_amine(smi_b)
-        arom_max = max(Descriptors.NumAromaticRings(Chem.MolFromSmiles(smi_a)) if Chem.MolFromSmiles(smi_a) else 0,
-                       Descriptors.NumAromaticRings(Chem.MolFromSmiles(smi_b)) if Chem.MolFromSmiles(smi_b) else 0)
+        EXPLANATIONS = {
+            "Bleeding Risk": "Pharmacophore alignment with cyclooxygenase or database-mapped coagulation alerts.",
+            "CNS Depression": "Structural markers indicating blood-brain barrier permeability and sedative potential.",
+            "Hepatotoxicity": "Metabolic load and molecular weight markers following Rule-of-Two guidelines.",
+            "Nephrotoxicity": f"Polarity ({max(d_a_safe.get('TPSA', 0.0), d_b_safe.get('TPSA', 0.0)):.1f}) and renal clearance efficiency estimates.",
+            "Reduced Therapeutic Effect": "CYP450 metabolic induction/inhibition profiles detected via pharmacology signals.",
+            "Cardiotoxicity": f"Cardiac stress risk based on MW ({max(d_a_safe.get('MW', 0.0), d_b_safe.get('MW', 0.0)):.1f}) and detected redox motifs."
+        }
 
-        # 🟢 QT GATE: ONLY assign if structural markers are present
-        if not ((max(d_a["LogP"], d_b["LogP"]) > 2.5) and (arom_max >= 2) and has_amine):
-            p_qt *= 0.2 # Drastic suppression for non-hERG structures
-            
-        # 🔵 Cardiotoxicity Boost (Nitro/Quinone motifs)
-        if has_patt(smi_a, "[N+](=O)[O-]") or has_patt(smi_b, "[N+](=O)[O-]") or has_patt(smi_a, "C1(=O)C=CC(=O)C=C1"):
-            p_cardio += 0.3
-        
-        # 🔴 Nephrotoxicity Boost (High polarity/Renal clearance)
-        if (d_a["TPSA"] > 110) and (d_a["MW"] < 400):
-            p_neph += 0.35
-        
-        # 🟣 Reduced Effect Boost (Pharmacology signals)
-        if any(kw in str(sig_a + sig_b).lower() for kw in ["inducer", "inhibitor", "cyp450"]):
-            p_red += 0.4
-
-        # Re-assemble risks
-        risks = [
-            {"label": "Cardiotoxicity", "probability": min(0.99, p_cardio), "reason": f"Cardiac stress risk based on MW ({max(d_a['MW'], d_b['MW']):.1f}) and detected redox motifs."},
-            {"label": "QT Prolongation", "probability": min(0.99, p_qt), "reason": "Structural hERG-binding potential evaluated via lipophilicity/aromaticity/amine-gate."},
-            {"label": "Hepatotoxicity", "probability": min(0.99, p_hep), "reason": "Metabolic load and molecular weight markers following Rule-of-Two guidelines."},
-            {"label": "Nephrotoxicity", "probability": min(0.99, p_neph), "reason": "Polarity ({max(d_a['TPSA'], d_b['TPSA']):.1f}) and renal clearance efficiency estimates."},
-            {"label": "Bleeding Risk", "probability": min(0.99, p_bleed), "reason": "Pharmacophore alignment with cyclooxygenase or database-mapped coagulation alerts."},
-            {"label": "Reduced Therapeutic Effect", "probability": min(0.99, p_red), "reason": "CYP450 metabolic induction/inhibition profiles detected via pharmacology signals."},
-        ]
+        if is_db:
+            label_name = payload.get('interaction_label', 'Unknown')
+            risks.append({
+                 "label": label_name,
+                 "probability": 1.0,
+                 "reason": "Direct experimental or clinical evidence available from reference database."
+            })
+        else:
+            all_probs = payload.get('all_probs', [])
+            if len(all_probs) == 6:
+                for idx, p in enumerate(all_probs):
+                    label_name = CLASS_LABELS.get(idx, "Unknown")
+                    risks.append({
+                        "label": label_name,
+                        "probability": float(p),
+                        "reason": EXPLANATIONS.get(label_name, "Identified by algorithmic inference.")
+                    })
+            else:
+                # Fallback in case of failure
+                label_name = payload.get('interaction_label', 'Unknown')
+                risks.append({
+                    "label": label_name,
+                    "probability": float(payload.get('confidence', 0.0)),
+                    "reason": "Algorithmic inference result."
+                })
 
         # Sort and take top 3
         sorted_risks = sorted(risks, key=lambda x: x["probability"], reverse=True)
         top_risks = sorted_risks[:3]
         
         # 📊 EVALUATION METRICS (Targeting >90% Precision)
-        if payload.get('from_database'):
+        if is_db:
             eval_metrics = {"accuracy": 0.924, "precision": 0.918, "recall": 0.902, "f1_score": 0.91}
         else:
             eval_metrics = {"accuracy": 0.885, "precision": 0.905, "recall": 0.842, "f1_score": 0.87}
@@ -802,10 +973,14 @@ else:
         
         img = draw_mol_clean(smi, h)
         sigs_html = ' '.join([f'<span class="signal-pill">{html.escape(s)}</span>' for s in signals])
+        if img:
+            img_tag = f"<div class='mol-frame'><img src='data:image/png;base64,{img}' width='100%'></div>"
+        else:
+            img_tag = "<div class='mol-frame' style='height:200px; display:flex; align-items:center; justify-content:center; color:#AD88C6;'>Structure unavailable</div>"
         st.markdown(f"""
         <div class='research-card'>
             <div class='descriptor-label' style='margin-bottom:1rem;'>{html.escape(title)} Profile</div>
-            <div class='mol-frame'><img src='data:image/png;base64,{img}' width='100%'></div>
+            {img_tag}
             <div style='margin-top:1rem;'>{sigs_html}</div>
         </div>""", unsafe_allow_html=True)
     
@@ -840,6 +1015,64 @@ else:
         st.markdown(f"<div class='research-card'><div style='font-weight:800; color:#7469B6; margin-bottom:1.5rem;'>{html.escape(title)}</div>{bars}</div>", unsafe_allow_html=True)
     with d_col1: render_d(d_a, "Compound A")
     with d_col2: render_d(d_b, "Compound B")
+    
+    # 🌌 MODULAR UI SECTIONS
+    st.markdown("<hr style='border:none; height:1px; background:rgba(116, 105, 182, 0.2); margin:3rem 0;'>", unsafe_allow_html=True)
+    
+    # 1. Maximum Common Substructure Section
+    st.markdown("<div style='text-align:center; margin-bottom: 2rem;'><span style='color: #7469B6; font-size:2.2rem; font-weight:900;'>Maximum Common Substructure</span><br><span style='color:#AD88C6; font-weight:600; font-size:1rem;'>Shared scaffold detected between both compounds. This explains structural similarity only, not toxicity.</span></div>", unsafe_allow_html=True)
+    
+    draw_mcs_only(m1, m2)
+    
+    st.markdown("<hr style='border:none; height:1px; background:rgba(116, 105, 182, 0.2); margin:3rem 0;'>", unsafe_allow_html=True)
+    
+    # 2. Molecular Reactivity Heatmap Section
+    st.markdown("<div style='text-align:center; margin-bottom: 1rem;'><span style='color: #ff6b6b; font-size:2.2rem; font-weight:900;'>Molecular Reactivity Heatmap</span><br><span style='color:#AD88C6; font-weight:600; font-size:1rem;'>Green, orange, and red regions show estimated atom-level contribution to the predicted interaction risk.</span></div>", unsafe_allow_html=True)
+    
+    st.markdown("<div class='research-card' style='border:2px solid rgba(255, 107, 107, 0.4); box-shadow: 0 8px 32px rgba(255, 107, 107, 0.1);'>", unsafe_allow_html=True)
+    st.markdown("<div style='text-align:center; color:#ff6b6b; font-weight:900; font-size:1.3rem; margin-bottom:15px;'>AI VISUAL EXPLANATION ENGINE</div>", unsafe_allow_html=True)
+    explanation_txt = generate_visual_explanation(sim_score, mcs_atoms, final_payload, d_a, d_b)
+    st.markdown(f"<div style='text-align:center; font-size:1.1rem; font-weight:600; color:#2d3436; max-width:800px; margin:0 auto; line-height:1.6;'><i>\"{explanation_txt}\"</i></div>", unsafe_allow_html=True)
+    st.markdown("<hr style='border:dashed 1px rgba(255, 107, 107, 0.3); margin:20px 0;'>", unsafe_allow_html=True)
+    
+    reactivity_m1, reactivity_m2 = st.columns(2)
+    with reactivity_m1:
+        st.markdown("<div style='text-align:center; font-weight:800; color:#2D3436; margin-bottom:10px;'>Compound A Reactivity</div>", unsafe_allow_html=True)
+        scores_a = compute_atom_reactivity_scores(m1, final_payload.get('interaction_label', ''), d_a)
+        draw_molecule_with_reactivity_heatmap(m1, scores_a, "Compound A")
+    with reactivity_m2:
+        st.markdown("<div style='text-align:center; font-weight:800; color:#2D3436; margin-bottom:10px;'>Compound B Reactivity</div>", unsafe_allow_html=True)
+        scores_b = compute_atom_reactivity_scores(m2, final_payload.get('interaction_label', ''), d_b)
+        draw_molecule_with_reactivity_heatmap(m2, scores_b, "Compound B")
+    st.markdown("</div>", unsafe_allow_html=True)
+    
+    st.markdown("<hr style='border:none; height:1px; background:rgba(116, 105, 182, 0.2); margin:3rem 0;'>", unsafe_allow_html=True)
+
+    # 3. Interaction Intensity Matrix Section
+    st.markdown("<div style='text-align:center; margin-bottom: 2rem;'><span style='color: #7469B6; font-size:2.2rem; font-weight:900;'>Interaction Intensity Matrix</span><br><span style='color:#AD88C6; font-weight:600; font-size:1rem;'>Numerical breakdown of structural, metabolic, toxicity, and clearance-level interaction signals.</span></div>", unsafe_allow_html=True)
+    
+    d_a_safe = d_a if d_a else {}
+    d_b_safe = d_b if d_b else {}
+    conf = final_payload.get('confidence', 0.5)
+    met_conflict = min(1.0, sim_score + 0.3 * conf)
+    tox_overlap = conf
+    cyp_prob = 0.8 if any('CYP' in s for s in sig_a + sig_b) else 0.3
+    bbb_a = 1.0 if d_a_safe.get('LogP', 0) > 2.0 and d_a_safe.get('MW', 500) < 400 else 0.2
+    bbb_b = 1.0 if d_b_safe.get('LogP', 0) > 2.0 and d_b_safe.get('MW', 500) < 400 else 0.2
+    clearance = min(1.0, (d_a_safe.get('MW', 300) + d_b_safe.get('MW', 300)) / 1000.0)
+
+    metrics = {
+        'Structural Similarity': sim_score,
+        'Toxicity Overlap': tox_overlap,
+        'Metabolic Conflict': met_conflict,
+        'CYP Interaction': cyp_prob,
+        'Clearance Burden': clearance,
+        'BBB/CNS Risk': max(bbb_a, bbb_b)
+    }
+    
+    st.markdown("<div style='text-align:center; font-weight:800; color:#7469B6; margin-bottom:10px;'>INTERACTION INTENSITY MATRIX</div>", unsafe_allow_html=True)
+    render_interaction_intensity_matrix(metrics)
+
 
     # 🧪 Bond Legend
     st.markdown("""

@@ -1,0 +1,21 @@
+push constant 0
+pop static 0
+push constant 1
+pop static 1
+push constant 6
+pop static 5
+label loop
+push static 1
+push static 5
+gt
+if-goto end
+push static 0
+push static 1
+add
+pop static 0
+push static 1
+push constant 1
+add
+pop static 1
+goto loop 
+label end

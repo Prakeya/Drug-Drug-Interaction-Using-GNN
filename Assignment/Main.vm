@@ -1,0 +1,13 @@
+// compute 3 + 8 * 5
+
+function Main.main 0
+
+push constant 3
+push constant 8
+push constant 5
+
+call Mult.mult 2   // multiply 8 * 5
+
+add                 // 3 + result
+
+return
