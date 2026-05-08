@@ -1,0 +1,5 @@
+Accuracy,Macro F1,MCC,Experiment
+0.4969,0.4357,0.4251,A: Base GNN
+0.3868,0.2854,0.2642,B: GNN + Weighted Loss
+0.5343,0.4325,0.4937,C: GNN + Descriptors
+0.1682,0.1936,0.1805,D: GNN + Descriptors + Focal

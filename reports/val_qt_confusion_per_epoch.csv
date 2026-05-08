@@ -1,0 +1,4 @@
+phase,epoch,qt_total,qt_correct,qt_misclassified_total,qt_recall_pct,qt_to_Bleeding risk,qt_to_Bleeding risk_pct,qt_to_CNS depression,qt_to_CNS depression_pct,qt_to_Hepatotoxicity,qt_to_Hepatotoxicity_pct,qt_to_Nephrotoxicity,qt_to_Nephrotoxicity_pct,qt_to_Reduced therapeutic efficacy,qt_to_Reduced therapeutic efficacy_pct,qt_to_Cardiotoxicity,qt_to_Cardiotoxicity_pct
+Val,1,36,0,36,0.0,0,0.0,0,0.0,35,97.22222222222223,1,2.7777777777777777,0,0.0,0,0.0
+Val,2,36,12,24,33.333333333333336,1,2.7777777777777777,1,2.7777777777777777,21,58.333333333333336,1,2.7777777777777777,0,0.0,12,33.333333333333336
+Val,3,36,27,9,75.0,1,2.7777777777777777,1,2.7777777777777777,7,19.444444444444443,0,0.0,0,0.0,27,75.0

@@ -22,14 +22,20 @@ import torch.nn as nn
 import torch.nn.functional as F
 from rdkit import Chem
 from rdkit import RDLogger
+import joblib
 from sklearn.metrics import (
 	confusion_matrix,
 	f1_score,
 	precision_recall_fscore_support,
 	roc_auc_score,
+	classification_report,
+	balanced_accuracy_score,
+	matthews_corrcoef,
+	precision_recall_curve,
+	auc,
 )
-from sklearn.preprocessing import label_binarize
-from torch.utils.data import DataLoader, Dataset, WeightedRandomSampler
+from sklearn.preprocessing import label_binarize, StandardScaler
+from torch.utils.data import DataLoader, Dataset, WeightedRandomSampler, Subset
 
 
 def set_seed(seed: int = 42) -> None:
@@ -40,21 +46,33 @@ def set_seed(seed: int = 42) -> None:
 		torch.cuda.manual_seed_all(seed)
 	torch.backends.cudnn.deterministic = True
 	torch.backends.cudnn.benchmark = False
+	# Enforce deterministic algorithms where possible
+	torch.use_deterministic_algorithms(True, warn_only=True)
+	os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
 
 
-ATOM_LIST = [
-	"C", "N", "O", "S", "F", "Si", "P", "Cl", "Br", "Mg", "Na", "Ca", "Fe", "As", "Al",
-	"I", "B", "V", "K", "Tl", "Yb", "Sb", "Sn", "Ag", "Pd", "Co", "Se", "Ti", "Zn",
-	"H", "Li", "Ge", "Cu", "Au", "Ni", "Cd", "In", "Mn", "Zr", "Cr", "Pt", "Hg", "Pb",
-]
-NODE_FEAT_DIM = len(ATOM_LIST) + 1 + 6 + 2
+import sys
+import os
+
+# Add root directory to sys.path for internal imports
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from models.architecture import (
+    NODE_FEAT_DIM, ATOM_LIST, DDIGNNModel, FocalLoss, 
+    MolecularDescriptorStandardizer, smiles_to_graph
+)
+
+
+# ==========================================
+# 🧬 DATA CONFIG & CONSTANTS
+# ==========================================
 
 SIDE_EFFECT_LABELS = [
-	"Bleeding risk",
-	"CNS depression",
+	"Bleeding Risk",
+	"CNS Depression",
 	"Hepatotoxicity",
 	"Nephrotoxicity",
-	"Reduced therapeutic efficacy",
+	"Reduced Therapeutic Effect",
 	"Cardiotoxicity",
 ]
 
@@ -64,134 +82,31 @@ TARGETED_QT_TEST_SMILES = {
 }
 
 SIDE_EFFECT_PATTERNS = {
-	"Bleeding risk": [
-		r"bleed",
-		r"hemorr",
-		r"haemorr",
-		r"anticoagul",
-		r"platelet",
-		r"inr",
+	"Bleeding Risk": [
+		r"bleed", r"hemorr", r"haemorr", r"anticoagul", r"platelet", r"inr",
 	],
 	"Cardiotoxicity": [
-		r"\bqt\b",
-		r"torsad",
-		r"arrhythm",
-		r"ventricular tachy",
-		r"cardiac rhythm",
-		r"heart",
-		r"myocard",
-		r"cardiotox",
-		r"congestive",
-		r"bradycard",
-		r"tachycard",
+		r"\bqt\b", r"torsad", r"arrhythm", r"ventricular tachy", r"cardiac rhythm", r"heart", r"myocard", r"cardiotox", r"congestive", r"bradycard", r"tachycard",
 	],
-	"CNS depression": [
-		r"\bcns\b",
-		r"sedat",
-		r"drows",
-		r"somnol",
-		r"respiratory depression",
-		r"central nervous system",
+	"CNS Depression": [
+		r"\bcns\b", r"sedat", r"drows", r"somnol", r"respiratory depression", r"central nervous system",
 	],
-	"Reduced therapeutic efficacy": [
-		r"efficacy.*decreas",
-		r"decreas.*efficacy",
-		r"reduce.*effect",
-		r"lower.*concentration",
-		r"decreas.*serum concentration",
-		r"diminish",
-		r"subtherapeutic",
+	"Reduced Therapeutic Effect": [
+		r"efficacy.*decreas", r"decreas.*efficacy", r"reduce.*effect", r"lower.*concentration", r"decreas.*serum concentration", r"diminish", r"subtherapeutic",
 	],
 	"Hepatotoxicity": [
-		r"hepatotox",
-		r"liver",
-		r"hepatic",
-		r"transaminase",
-		r"\balt\b",
-		r"\bast\b",
+		r"hepatotox", r"liver", r"hepatic", r"transaminase", r"\balt\b", r"\bast\b",
 	],
 	"Nephrotoxicity": [
-		r"nephrotox",
-		r"renal",
-		r"kidney",
-		r"creatinin",
+		r"nephrotox", r"renal", r"kidney", r"creatinin",
 	],
 }
 
 QT_DRUG_FAMILY_KEYWORDS = {
-	"antibiotics": [
-		"antibiotic",
-		"macrolide",
-		"azithromycin",
-		"clarithromycin",
-		"erythromycin",
-		"fluoroquinolone",
-		"moxifloxacin",
-		"levofloxacin",
-		"ciprofloxacin",
-	],
-	"antipsychotics": [
-		"antipsychotic",
-		"haloperidol",
-		"quetiapine",
-		"risperidone",
-		"ziprasidone",
-		"olanzapine",
-		"chlorpromazine",
-	],
-	"antiarrhythmics": [
-		"antiarrhythmic",
-		"amiodarone",
-		"sotalol",
-		"quinidine",
-		"dofetilide",
-		"procainamide",
-	],
+	"antibiotics": ["antibiotic", "macrolide", "azithromycin", "clarithromycin", "erythromycin", "fluoroquinolone", "moxifloxacin", "levofloxacin", "ciprofloxacin"],
+	"antipsychotics": ["antipsychotic", "haloperidol", "quetiapine", "risperidone", "ziprasidone", "olanzapine", "chlorpromazine"],
+	"antiarrhythmics": ["antiarrhythmic", "amiodarone", "sotalol", "quinidine", "dofetilide", "procainamide"],
 }
-
-
-def atom_feature(atom) -> np.ndarray:
-	symbol = atom.GetSymbol()
-	symbol_idx = ATOM_LIST.index(symbol) if symbol in ATOM_LIST else len(ATOM_LIST)
-	symbol_feat = np.zeros(len(ATOM_LIST) + 1, dtype=np.float32)
-	symbol_feat[symbol_idx] = 1.0
-
-	degree = atom.GetDegree()
-	degree_feat = np.zeros(6, dtype=np.float32)
-	degree_feat[min(degree, 5)] = 1.0
-
-	formal_charge = atom.GetFormalCharge()
-	charge_feat = np.array([formal_charge], dtype=np.float32)
-	aromatic_feat = np.array([float(atom.GetIsAromatic())], dtype=np.float32)
-	return np.concatenate([symbol_feat, degree_feat, charge_feat, aromatic_feat])
-
-
-def smiles_to_graph(smiles: str, max_nodes: int) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-	mol = Chem.MolFromSmiles(smiles)
-	if mol is None:
-		raise ValueError("Invalid SMILES reached graph conversion after filtering.")
-
-	num_atoms = mol.GetNumAtoms()
-	num_use = min(num_atoms, max_nodes)
-
-	X = np.zeros((max_nodes, NODE_FEAT_DIM), dtype=np.float32)
-	for i in range(num_use):
-		X[i] = atom_feature(mol.GetAtomWithIdx(i))
-
-	A = np.zeros((max_nodes, max_nodes), dtype=np.float32)
-	for bond in mol.GetBonds():
-		i = bond.GetBeginAtomIdx()
-		j = bond.GetEndAtomIdx()
-		if i < max_nodes and j < max_nodes:
-			A[i, j] = 1.0
-			A[j, i] = 1.0
-
-	for i in range(num_use):
-		A[i, i] = 1.0
-
-	mask = np.zeros((max_nodes,), dtype=np.float32)
-	mask[:num_use] = 1.0
-	return A, X, mask
 
 
 def _is_valid_smiles(smiles: str, cache: Dict[str, bool]) -> bool:
@@ -553,6 +468,7 @@ class DDIGNNDataset(Dataset):
 		label_cols: Optional[list[str]],
 		graph_cache: Dict[str, Tuple[np.ndarray, np.ndarray, np.ndarray]],
 		class_to_idx: Optional[dict] = None,
+		descriptor_standardizer: Optional[MolecularDescriptorStandardizer] = None,
 	):
 		self.df = df.reset_index(drop=True)
 		self.max_nodes = max_nodes
@@ -560,6 +476,7 @@ class DDIGNNDataset(Dataset):
 		self.label_cols = label_cols
 		self.graph_cache = graph_cache
 		self.class_to_idx = class_to_idx or {}
+		self.descriptor_standardizer = descriptor_standardizer
 
 	def __len__(self) -> int:
 		return len(self.df)
@@ -576,6 +493,15 @@ class DDIGNNDataset(Dataset):
 
 		A1, X1, m1 = self._get_graph(s1)
 		A2, X2, m2 = self._get_graph(s2)
+
+		d1_tensor, d2_tensor = None, None
+		if self.descriptor_standardizer:
+			m1_obj = Chem.MolFromSmiles(s1)
+			m2_obj = Chem.MolFromSmiles(s2)
+			d1 = self.descriptor_standardizer.transform(m1_obj)
+			d2 = self.descriptor_standardizer.transform(m2_obj)
+			d1_tensor = torch.tensor(d1, dtype=torch.float32)
+			d2_tensor = torch.tensor(d2, dtype=torch.float32)
 
 		if self.task_type == "multilabel":
 			y = row[self.label_cols].values.astype(np.float32)
@@ -596,83 +522,35 @@ class DDIGNNDataset(Dataset):
 			torch.tensor(A2, dtype=torch.float32),
 			torch.tensor(X2, dtype=torch.float32),
 			torch.tensor(m2, dtype=torch.float32),
+			d1_tensor,
+			d2_tensor,
 			y_tensor,
 		)
 
 
 def collate_fn(batch):
-	A1, X1, m1, A2, X2, m2, y = zip(*batch)
-	return (
+	A1, X1, m1, A2, X2, m2, D1, D2, y = zip(*batch)
+	res = [
 		torch.stack(A1, dim=0),
 		torch.stack(X1, dim=0),
 		torch.stack(m1, dim=0),
 		torch.stack(A2, dim=0),
 		torch.stack(X2, dim=0),
 		torch.stack(m2, dim=0),
-		torch.stack(y, dim=0),
-	)
+	]
+	# Handle optional descriptors
+	if D1[0] is not None:
+		res.append(torch.stack(D1, dim=0))
+		res.append(torch.stack(D2, dim=0))
+	else:
+		res.append(None)
+		res.append(None)
+	
+	res.append(torch.stack(y, dim=0))
+	return tuple(res)
 
 
-class SimpleGCNLayer(nn.Module):
-	def __init__(self, in_dim: int, out_dim: int):
-		super().__init__()
-		self.lin = nn.Linear(in_dim, out_dim)
-
-	def forward(self, A, X):
-		AX = torch.bmm(A, X)
-		H = self.lin(AX)
-		return F.relu(H)
-
-
-class AttentionPooling(nn.Module):
-	def __init__(self, hidden_dim: int):
-		super().__init__()
-		self.attention_layer = nn.Linear(hidden_dim, 1)
-
-	def forward(self, H, mask):
-		attn_logits = self.attention_layer(H).squeeze(-1)
-		attn_logits = attn_logits.masked_fill(mask == 0, -1e9)
-		attn_weights = F.softmax(attn_logits, dim=1)
-		pooled = torch.bmm(attn_weights.unsqueeze(1), H).squeeze(1)
-		return pooled, attn_weights
-
-
-class DrugGNN(nn.Module):
-	def __init__(self, node_dim: int, hidden_dim: int, out_dim: int):
-		super().__init__()
-		self.gcn1 = SimpleGCNLayer(node_dim, hidden_dim)
-		self.gcn2 = SimpleGCNLayer(hidden_dim, hidden_dim)
-		self.attention = AttentionPooling(hidden_dim)
-		self.lin = nn.Linear(hidden_dim, out_dim)
-
-	def forward(self, A, X, mask, return_attn: bool = False):
-		H = self.gcn1(A, X)
-		H = self.gcn2(A, H)
-		graph_emb, attn_weights = self.attention(H, mask)
-		out = self.lin(graph_emb)
-		if return_attn:
-			return out, attn_weights, H
-		return out
-
-
-class DDIGNNModel(nn.Module):
-	def __init__(self, node_dim: int, hidden_dim: int, num_labels: int):
-		super().__init__()
-		self.gnn_a = DrugGNN(node_dim, hidden_dim, hidden_dim)
-		self.gnn_b = DrugGNN(node_dim, hidden_dim, hidden_dim)
-		self.fc1 = nn.Linear(hidden_dim * 4, 256)
-		self.fc2 = nn.Linear(256, num_labels)
-		self.dropout = nn.Dropout(0.3)
-
-	def forward(self, A1, X1, m1, A2, X2, m2):
-		h1 = self.gnn_a(A1, X1, m1)
-		h2 = self.gnn_b(A2, X2, m2)
-		h_diff = torch.abs(h1 - h2)
-		h_prod = h1 * h2
-		h = torch.cat([h1, h2, h_diff, h_prod], dim=1)
-		h = F.relu(self.fc1(h))
-		h = self.dropout(h)
-		return self.fc2(h)
+# Redundant DDIGNNModel and GNN components removed
 
 
 def infer_task_config(train_df: pd.DataFrame):
@@ -750,10 +628,15 @@ def collect_predictions(model, loader, device, task_type: str):
 	y_score_chunks = []
 
 	with torch.no_grad():
-		for A1, X1, m1, A2, X2, m2, y in loader:
+		for batch in loader:
+			# batch: (A1, X1, m1, A2, X2, m2, D1, D2, y)
+			A1, X1, m1, A2, X2, m2, D1, D2, y = batch
 			A1, X1, m1 = A1.to(device), X1.to(device), m1.to(device)
 			A2, X2, m2 = A2.to(device), X2.to(device), m2.to(device)
-			logits = model(A1, X1, m1, A2, X2, m2)
+			if D1 is not None and D2 is not None:
+				D1, D2 = D1.to(device), D2.to(device)
+			
+			logits = model(A1, X1, m1, A2, X2, m2, D1, D2)
 
 			if task_type == "multiclass":
 				scores = torch.softmax(logits, dim=1)
@@ -771,9 +654,119 @@ def collect_predictions(model, loader, device, task_type: str):
 	elif task_type == "binary":
 		y_pred = (y_score.reshape(-1) >= 0.5).astype(np.int64)
 	else:
-		y_pred = (y_score >= 0.5).astype(np.int64)
+		y_pred = (y_score >= 0.5).astype(np.float32)
 
 	return y_true, y_pred, y_score
+
+
+class EarlyStopping:
+	"""Closes training if validation metric does not improve."""
+	def __init__(self, patience=10, min_delta=0, mode='max'):
+		self.patience = patience
+		self.min_delta = min_delta
+		self.mode = mode
+		self.counter = 0
+		self.best_score = None
+		self.early_stop = False
+
+	def __call__(self, score):
+		if self.best_score is None:
+			self.best_score = score
+		elif self.mode == 'max' and score < self.best_score + self.min_delta:
+			self.counter += 1
+			if self.counter >= self.patience:
+				self.early_stop = True
+		elif self.mode == 'min' and score > self.best_score - self.min_delta:
+			self.counter += 1
+			if self.counter >= self.patience:
+				self.early_stop = True
+		else:
+			self.best_score = score
+			self.counter = 0
+
+
+def train_epoch(model, loader, optimizer, criterion, device, task_type: str, grad_clip: float = 1.0):
+	model.train()
+	total_loss = 0.0
+
+	for batch in loader:
+		A1, X1, m1, A2, X2, m2, D1, D2, y = batch
+		A1, X1, m1 = A1.to(device), X1.to(device), m1.to(device)
+		A2, X2, m2 = A2.to(device), X2.to(device), m2.to(device)
+		if D1 is not None and D2 is not None:
+			D1, D2 = D1.to(device), D2.to(device)
+		y = y.to(device)
+
+		optimizer.zero_grad()
+		logits = model(A1, X1, m1, A2, X2, m2, D1, D2)
+		loss = criterion(logits, y)
+		loss.backward()
+		
+		if grad_clip > 0:
+			torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
+			
+		optimizer.step()
+		total_loss += loss.item()
+
+	return total_loss / len(loader)
+
+
+def validate(model, loader, criterion, device, task_type: str, num_outputs: int):
+	model.eval()
+	total_loss = 0.0
+	y_true_list, y_pred_list, y_score_list = [], [], []
+
+	with torch.no_grad():
+		for batch in loader:
+			A1, X1, m1, A2, X2, m2, D1, D2, y = batch
+			A1, X1, m1 = A1.to(device), X1.to(device), m1.to(device)
+			A2, X2, m2 = A2.to(device), X2.to(device), m2.to(device)
+			if D1 is not None and D2 is not None:
+				D1, D2 = D1.to(device), D2.to(device)
+			y = y.to(device)
+
+			logits = model(A1, X1, m1, A2, X2, m2, D1, D2)
+			loss = criterion(logits, y)
+			total_loss += loss.item()
+
+			if task_type == "multiclass":
+				scores = torch.softmax(logits, dim=1)
+				preds = scores.argmax(dim=1)
+			else:
+				scores = torch.sigmoid(logits)
+				preds = (scores >= 0.5).float()
+
+			y_true_list.append(y.cpu().numpy())
+			y_pred_list.append(preds.cpu().numpy())
+			y_score_list.append(scores.cpu().numpy())
+
+	y_true = np.concatenate(y_true_list, axis=0)
+	y_pred = np.concatenate(y_pred_list, axis=0)
+	y_score = np.concatenate(y_score_list, axis=0)
+
+	avg_loss = total_loss / len(loader)
+	
+	if task_type == "multiclass":
+		f1_macro = f1_score(y_true, y_pred, average="macro", zero_division=0)
+		f1_weighted = f1_score(y_true, y_pred, average="weighted", zero_division=0)
+		auc_val = safe_multiclass_auc(y_true, y_score, num_outputs)
+		mcc = matthews_corrcoef(y_true, y_pred)
+		bal_acc = balanced_accuracy_score(y_true, y_pred)
+	else:
+		f1_macro = f1_score(y_true, y_pred, average="macro", zero_division=0)
+		f1_weighted = f1_score(y_true, y_pred, average="weighted", zero_division=0)
+		auc_val = roc_auc_score(y_true, y_score, average="macro")
+		mcc = matthews_corrcoef(y_true.flatten(), y_pred.flatten())
+		bal_acc = balanced_accuracy_score(y_true.flatten(), y_pred.flatten())
+
+	return {
+		"loss": avg_loss,
+		"f1": f1_macro,
+		"f1_weighted": f1_weighted,
+		"auc": auc_val,
+		"mcc": mcc,
+		"bal_acc": bal_acc
+	}
 
 
 def evaluate(model, loader, device, task_type: str, num_outputs: int) -> tuple[dict, tuple[np.ndarray, np.ndarray, np.ndarray]]:
@@ -791,18 +784,34 @@ def evaluate(model, loader, device, task_type: str, num_outputs: int) -> tuple[d
 
 	if task_type == "multiclass":
 		yt = y_true.reshape(-1).astype(np.int64)
-		precision_macro, recall_macro, f1_macro, _ = precision_recall_fscore_support(
-			yt,
-			y_pred,
-			average="macro",
-			zero_division=0,
-		)
+		p_macro, r_macro, f1_macro, _ = precision_recall_fscore_support(yt, y_pred, average="macro", zero_division=0)
+		f1_weighted = f1_score(yt, y_pred, average="weighted", zero_division=0)
+		mcc = matthews_corrcoef(yt, y_pred)
+		bal_acc = balanced_accuracy_score(yt, y_pred)
+		
+		# Multiclass ROC-AUC and PR-AUC
+		y_true_bin = label_binarize(yt, classes=np.arange(num_outputs))
+		try:
+			auc_roc = roc_auc_score(y_true_bin, y_score, average="macro", multi_class="ovr")
+		except:
+			auc_roc = float("nan")
+			
+		from sklearn.metrics import average_precision_score
+		try:
+			auc_pr = average_precision_score(y_true_bin, y_score, average="macro")
+		except:
+			auc_pr = float("nan")
+
 		metrics = {
 			"acc": float((y_pred == yt).mean()),
-			"precision_macro": float(precision_macro),
-			"recall_macro": float(recall_macro),
+			"balanced_acc": float(bal_acc),
+			"precision_macro": float(p_macro),
+			"recall_macro": float(r_macro),
 			"macro_f1": float(f1_macro),
-			"auc_ovr": safe_multiclass_auc(yt, y_score, num_outputs),
+			"weighted_f1": float(f1_weighted),
+			"mcc": float(mcc),
+			"auc_roc": float(auc_roc),
+			"auc_pr": float(auc_pr),
 		}
 		return metrics, (yt, y_pred, y_score)
 
@@ -990,9 +999,9 @@ def load_checkpoint(
 
 
 def main():
-	parser = argparse.ArgumentParser(description="Train simple DrugBank DDI GNN (pure PyTorch)")
+	parser = argparse.ArgumentParser(description="Advanced DDI GNN Training Pipeline")
 	parser.add_argument("--data-path", type=str, default="data/drugbank.tab")
-	parser.add_argument("--epochs", type=int, default=20)
+	parser.add_argument("--epochs", type=int, default=50)
 	parser.add_argument("--batch-size", type=int, default=128)
 	parser.add_argument("--num-workers", type=int, default=4)
 	parser.add_argument("--max-nodes", type=int, default=70)
@@ -1000,317 +1009,150 @@ def main():
 	parser.add_argument("--lr", type=float, default=1e-3)
 	parser.add_argument("--weight-decay", type=float, default=1e-4)
 	parser.add_argument("--grad-clip", type=float, default=1.0)
-	parser.add_argument("--qt-loss-boost", type=float, default=1.5)
-	parser.add_argument("--patience", type=int, default=5)
-	parser.add_argument("--min-delta", type=float, default=1e-4)
-	parser.add_argument("--use-class-weights", action=argparse.BooleanOptionalAction, default=True)
-	parser.add_argument("--resume", action=argparse.BooleanOptionalAction, default=True)
-	parser.add_argument("--checkpoint-path", type=str, default="models/drugbank_ddi_simple_gnn.ckpt")
-	parser.add_argument("--report-dir", type=str, default="reports")
+	parser.add_argument("--patience", type=int, default=10)
+	parser.add_argument("--loss-type", type=str, choices=["ce", "weighted_ce", "focal"], default="focal")
+	parser.add_argument("--gnn-type", type=str, choices=["gcn", "gat"], default="gcn")
+	parser.add_argument("--use-descriptors", action=argparse.BooleanOptionalAction, default=True)
+	parser.add_argument("--resume", action=argparse.BooleanOptionalAction, default=False)
+	parser.add_argument("--checkpoint-path", type=str, default="models/ddi_advanced_gnn.ckpt")
 	parser.add_argument("--seed", type=int, default=42)
-	parser.add_argument("--out", type=str, default="models/drugbank_ddi_simple_gnn.pt")
+	parser.add_argument("--out", type=str, default="models/ddi_advanced_gnn.pt")
 	args = parser.parse_args()
 
 	device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-	print("Device:", device)
+	print(f"Device: {device} | Loss: {args.loss_type} | Descriptors: {args.use_descriptors}")
 
 	set_seed(args.seed)
 	RDLogger.DisableLog("rdApp.error")
 
-	print(f"Loading DrugBank tab from: {args.data_path}")
+	print(f"Loading data from: {args.data_path}")
 	clinical_df = build_clinical_side_effect_dataset(args.data_path)
-	if clinical_df.empty:
-		raise ValueError("No rows mapped to clinical side-effect classes. Check mapping rules and source data.")
+	
+	# DATA QUALITY CHECKS
+	print("\n[DATA QUALITY] Running integrity checks...")
+	all_smiles = pd.concat([clinical_df["Drug1"], clinical_df["Drug2"]])
+	dupes = all_smiles.duplicated().sum()
+	print(f"  - Duplicate SMILES in raw dataset: {dupes}")
+	
+	# Drug-level split
+	train_df, valid_df, test_df = enforce_drug_level_split_df(clinical_df, train_ratio=0.8, valid_ratio=0.1, seed=args.seed)
 
-	print_class_distribution(clinical_df, "All mapped rows")
-
-	# Ensure direct molecular-structure -> clinical-side-effect targets via drug-level split.
-	train_df, valid_df, test_df = enforce_drug_level_split_df(
-		clinical_df,
-		train_ratio=0.8,
-		valid_ratio=0.1,
-		seed=args.seed,
-	)
+	# Leakage Verification
+	overlap = summarize_drug_overlap(train_df, valid_df, test_df)
+	print(f"  - Split Leakage Check: {overlap['train_val_overlap'] + overlap['train_test_overlap'] + overlap['valid_test_overlap']} drugs overlap (target: 0)")
+	if overlap["train_test_overlap"] > 0:
+		raise ValueError("CRITICAL: Leakage detected between Train and Test sets.")
 
 	smiles_valid_cache: Dict[str, bool] = {}
 	train_df = filter_invalid_smiles_rows(train_df, "train", smiles_valid_cache)
 	valid_df = filter_invalid_smiles_rows(valid_df, "valid", smiles_valid_cache)
 	test_df = filter_invalid_smiles_rows(test_df, "test", smiles_valid_cache)
 
-	if train_df.empty or valid_df.empty or test_df.empty:
-		raise ValueError("One or more splits are empty after filtering; adjust split ratios or mapping coverage.")
-
-	print("Train:", train_df.shape)
-	print("Valid:", valid_df.shape)
-	print("Test :", test_df.shape)
-
-	print_class_distribution(train_df, "Train")
-	print_class_distribution(valid_df, "Valid")
-	print_class_distribution(test_df, "Test")
-	overlap_summary = summarize_drug_overlap(train_df, valid_df, test_df)
-	print("Drug overlap summary:", overlap_summary)
-	if (
-		overlap_summary["train_val_overlap"] > 0
-		or overlap_summary["train_test_overlap"] > 0
-		or overlap_summary["valid_test_overlap"] > 0
-	):
-		raise ValueError("Drug-level split leakage detected after filtering.")
-
-	cfg = infer_task_config(train_df)
-	task_type = cfg["task_type"]
-	label_cols = cfg["label_cols"]
 	class_to_idx = {label: idx for idx, label in enumerate(SIDE_EFFECT_LABELS)}
 	num_outputs = len(SIDE_EFFECT_LABELS)
+	task_type = "multiclass"
 
-	if task_type != "multiclass":
-		raise ValueError(f"Expected multiclass clinical-side-effect targets, got task_type={task_type}")
-
-	observed_labels = set(clinical_df["Y"].dropna().unique().tolist())
-	if observed_labels != set(SIDE_EFFECT_LABELS):
-		missing = sorted(set(SIDE_EFFECT_LABELS) - observed_labels)
-		extra = sorted(observed_labels - set(SIDE_EFFECT_LABELS))
-		raise ValueError(
-			"Clinical label-space mismatch. "
-			f"missing={missing}, extra={extra}."
-		)
-
-	if num_outputs != 6:
-		raise ValueError(f"Expected exactly 6 outputs for app compatibility, got {num_outputs}")
-
-
-
-	print("Task type:", task_type)
-	print("Number of outputs:", num_outputs)
-	if task_type == "multiclass":
-		print("Detected clinical side-effect classes:", num_outputs)
+	# DESCRIPTOR STANDARDIZATION
+	standardizer = None
+	if args.use_descriptors:
+		print("\n[FE] Fitting Molecular Descriptor Standardizer on Training Set...")
+		standardizer = MolecularDescriptorStandardizer()
+		train_smiles = list(set(train_df["Drug1"].tolist() + train_df["Drug2"].tolist()))
+		standardizer.fit(train_smiles)
 
 	graph_cache: Dict[str, Tuple[np.ndarray, np.ndarray, np.ndarray]] = {}
+	train_set = DDIGNNDataset(train_df, args.max_nodes, task_type, None, graph_cache, class_to_idx, standardizer)
+	valid_set = DDIGNNDataset(valid_df, args.max_nodes, task_type, None, graph_cache, class_to_idx, standardizer)
+	test_set = DDIGNNDataset(test_df, args.max_nodes, task_type, None, graph_cache, class_to_idx, standardizer)
 
-	train_set = DDIGNNDataset(train_df, args.max_nodes, task_type, label_cols, graph_cache, class_to_idx)
-	valid_set = DDIGNNDataset(valid_df, args.max_nodes, task_type, label_cols, graph_cache, class_to_idx)
-	test_set = DDIGNNDataset(test_df, args.max_nodes, task_type, label_cols, graph_cache, class_to_idx)
+	# LOSS & WEIGHTS
+	y_idx = train_df["Y"].map(class_to_idx).values
+	class_counts = np.bincount(y_idx, minlength=num_outputs).astype(np.float32)
+	weights_np = np.sqrt(1.0 / np.clip(class_counts / class_counts.sum(), 1e-6, None))
+	weights_np /= weights_np.sum()
+	weights = torch.tensor(weights_np, dtype=torch.float32, device=device)
 
-	loader_kwargs = {
-		"batch_size": args.batch_size,
-		"num_workers": args.num_workers,
-		"pin_memory": device.type == "cuda",
-		"persistent_workers": args.num_workers > 0,
-		"collate_fn": collate_fn,
-	}
-	train_loader = DataLoader(train_set, shuffle=True, **loader_kwargs)
+	if args.loss_type == "focal":
+		criterion = FocalLoss(weight=weights, gamma=2.0)
+	elif args.loss_type == "weighted_ce":
+		criterion = nn.CrossEntropyLoss(weight=weights)
+	else:
+		criterion = nn.CrossEntropyLoss()
+
+	loader_kwargs = {"batch_size": args.batch_size, "num_workers": args.num_workers, "collate_fn": collate_fn}
+	train_loader = DataLoader(train_set, sampler=WeightedRandomSampler(
+		[weights_np[y] for y in y_idx], len(train_set)), **loader_kwargs)
 	valid_loader = DataLoader(valid_set, shuffle=False, **loader_kwargs)
 	test_loader = DataLoader(test_set, shuffle=False, **loader_kwargs)
 
-	model = DDIGNNModel(NODE_FEAT_DIM, args.hidden_dim, num_outputs).to(device)
-	print(model)
-
-	if task_type == "multiclass":
-		# Mild class weighting: normalized sqrt(inverse_frequency)
-		y_idx = train_df["Y"].map(class_to_idx).values
-		class_counts = np.bincount(y_idx, minlength=num_outputs).astype(np.float32)
-		freqs = class_counts / class_counts.sum()
-		inv_freqs = 1.0 / np.clip(freqs, 1e-6, None)
-		sqrt_inv_freqs = np.sqrt(inv_freqs)
-		class_weights_np = sqrt_inv_freqs / sqrt_inv_freqs.sum()
-		class_weights = torch.tensor(class_weights_np, dtype=torch.float32, device=device)
-		qt_idx = int(class_to_idx["Cardiotoxicity"])
-		print("\nCrossEntropy class weights (sqrt-smoothed):")
-		for i, label in enumerate(SIDE_EFFECT_LABELS):
-			print(
-				f"  - {label:<30} count={int(class_counts[i]):>7} weight={float(class_weights_np[i]):.4f}"
-			)
-		print(f"Using CrossEntropyLoss with mild class weights.")
-		criterion = nn.CrossEntropyLoss(weight=class_weights)
-	else:
-		criterion = nn.BCEWithLogitsLoss()
-
+	model = DDIGNNModel(
+		NODE_FEAT_DIM, args.hidden_dim, num_outputs, 
+		descriptor_dim=8 if args.use_descriptors else 0,
+		gnn_type=args.gnn_type
+	).to(device)
 	optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
-	scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-		optimizer,
-		mode="max",
-		factor=0.5,
-		patience=2,
-		min_lr=1e-6,
-	)
-
-	if task_type == "multiclass":
-		monitor_key = "macro_f1"
-	elif task_type == "binary":
-		monitor_key = "auc"
-	else:
-		monitor_key = "auc_macro"
+	scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="max", factor=0.5, patience=3)
+	early_stopping = EarlyStopping(patience=args.patience, mode="max")
 
 	start_epoch = 1
-	best_score = -float("inf")
-	best_epoch = 0
-	patience_counter = 0
-
 	if args.resume and os.path.exists(args.checkpoint_path):
-		epoch_loaded, best_score, best_epoch, patience_counter = load_checkpoint(
-			args.checkpoint_path,
-			model,
-			optimizer,
-			scheduler,
-			device,
-		)
-		start_epoch = epoch_loaded + 1
-		print(f"Resumed from checkpoint {args.checkpoint_path} at epoch {epoch_loaded}.")
+		start_epoch, _, _, _ = load_checkpoint(args.checkpoint_path, model, optimizer, scheduler, device)
+		print(f"Resumed from epoch {start_epoch}")
 
-	if start_epoch > args.epochs:
-		print("Checkpoint already reached requested epochs; skipping training loop.")
-
-	qt_val_confusion_records = []
-
+	print("\n[TRAIN] Beginning training loop...")
 	for epoch in range(start_epoch, args.epochs + 1):
-		model.train()
-		total_loss = 0.0
-		t0 = time.time()
-
-		for A1, X1, m1, A2, X2, m2, y in train_loader:
-			A1, X1, m1 = A1.to(device), X1.to(device), m1.to(device)
-			A2, X2, m2 = A2.to(device), X2.to(device), m2.to(device)
-			y = y.to(device)
-
-			optimizer.zero_grad()
-			logits = model(A1, X1, m1, A2, X2, m2)
-			if task_type == "multiclass":
-				loss = criterion(logits, y.long())
-			else:
-				loss = criterion(logits, y.float())
-			loss.backward()
-			torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=args.grad_clip)
-			optimizer.step()
-
-			total_loss += loss.item() * A1.size(0)
-
-		train_loss = total_loss / len(train_set)
-		val_metrics, (val_y_true, val_y_pred, _) = evaluate(model, valid_loader, device, task_type, num_outputs)
-		monitor_val = val_metrics.get(monitor_key, float("nan"))
-		if np.isnan(monitor_val):
-			monitor_val = val_metrics.get("acc", float("nan"))
-
-		if not np.isnan(monitor_val):
-			scheduler.step(monitor_val)
-
-		improved = (not np.isnan(monitor_val)) and (monitor_val > best_score + args.min_delta)
-		if improved:
-			best_score = monitor_val
-			best_epoch = epoch
-			patience_counter = 0
-
-			out_dir = os.path.dirname(args.out)
-			if out_dir:
-				os.makedirs(out_dir, exist_ok=True)
+		t_loss = train_epoch(model, train_loader, optimizer, criterion, device, task_type, args.grad_clip)
+		val_res = validate(model, valid_loader, criterion, device, task_type, num_outputs)
+		
+		print(f"Epoch {epoch:02d} | T-Loss: {t_loss:.4f} | V-Loss: {val_res['loss']:.4f} | V-F1: {val_res['f1']:.4f} | V-MCC: {val_res['mcc']:.4f}")
+		
+		scheduler.step(val_res["f1"])
+		early_stopping(val_res["f1"])
+		
+		if early_stopping.best_score == val_res["f1"]:
 			torch.save(model.state_dict(), args.out)
-		else:
-			patience_counter += 1
 
-		save_checkpoint(
-			args.checkpoint_path,
-			epoch,
-			model,
-			optimizer,
-			scheduler,
-			best_score,
-			best_epoch,
-			patience_counter,
-			task_type,
-			class_to_idx,
-			args.max_nodes,
-			args.hidden_dim,
-			num_outputs,
-		)
-
-		lr_now = optimizer.param_groups[0]["lr"]
-		metrics_text = " | ".join([f"Val {k}: {v:.4f}" for k, v in val_metrics.items()])
-		print(
-			f"Epoch {epoch:02d} | Train loss: {train_loss:.4f} | {metrics_text} | "
-			f"LR: {lr_now:.6f} | Time: {time.time() - t0:.1f}s"
-		)
-
-		if task_type == "multiclass":
-			val_cm, val_per_class = per_class_multiclass_report(val_y_true, val_y_pred, class_to_idx)
-			val_class_text = " | ".join(
-				[
-					(
-						f"{row['class_label']}:P={row['precision']:.2f},"
-						f"R={row['recall']:.2f},F1={row['f1']:.2f}"
-					)
-					for _, row in val_per_class.iterrows()
-				]
-			)
-			print(f"  Val per-class -> {val_class_text}")
-			qt_conf = log_qt_misclassifications(val_cm, class_to_idx, phase_label="Val", epoch=epoch)
-			qt_val_confusion_records.append(qt_conf)
-
-		if patience_counter >= args.patience:
-			print(
-				f"Early stopping at epoch {epoch} "
-				f"(best epoch: {best_epoch}, best {monitor_key}: {best_score:.4f})"
-			)
+		save_checkpoint(args.checkpoint_path, epoch, model, optimizer, scheduler, 
+						early_stopping.best_score, epoch, early_stopping.counter, 
+						task_type, class_to_idx, args.max_nodes, args.hidden_dim, num_outputs)
+		
+		if early_stopping.early_stop:
+			print(f"Early stopping at epoch {epoch}")
 			break
 
-	if os.path.exists(args.out):
-		model.load_state_dict(torch.load(args.out, map_location=device))
+	# FINAL EVALUATION
+	model.load_state_dict(torch.load(args.out))
+	test_res = validate(model, test_loader, criterion, device, task_type, num_outputs)
+	y_true, y_pred, y_score = collect_predictions(model, test_loader, device, task_type)
+	
+	print("\n" + "="*40)
+	print("FINAL PERFORMANCE REPORT (TEST SET)")
+	print("="*40)
+	print(f"Accuracy: {test_res['bal_acc']:.4f} (Balanced)")
+	print(f"Macro F1: {test_res['f1']:.4f}")
+	print(f"MCC:      {test_res['mcc']:.4f}")
+	print(f"ROC-AUC:  {test_res['auc']:.4f}")
+	
+	report = classification_report(y_true, y_pred, target_names=SIDE_EFFECT_LABELS, zero_division=0)
+	print("\nPer-Class Detailed Report:")
+	print(report)
 
-	test_metrics, (y_true, y_pred, _y_score) = evaluate(model, test_loader, device, task_type, num_outputs)
-	metrics_text = " | ".join([f"Test {k}: {v:.4f}" for k, v in test_metrics.items()])
-	print(f"\n{metrics_text}")
-
-	if task_type == "multiclass" and class_to_idx is not None:
-		export_multiclass_reports(y_true, y_pred, class_to_idx, args.report_dir)
-		test_cm, _ = per_class_multiclass_report(y_true, y_pred, class_to_idx)
-		_ = log_qt_misclassifications(test_cm, class_to_idx, phase_label="Test", epoch=None)
-		if qt_val_confusion_records:
-			os.makedirs(args.report_dir, exist_ok=True)
-			qt_epoch_path = os.path.join(args.report_dir, "val_qt_confusion_per_epoch.csv")
-			pd.DataFrame(qt_val_confusion_records).to_csv(qt_epoch_path, index=False)
-			print(f"Saved per-epoch QT confusion trace: {qt_epoch_path}")
-
-	# Targeted QT validation requested by product requirement.
-	idx_to_class = {v: k for k, v in class_to_idx.items()} if class_to_idx is not None else {}
-	citalopram_smiles = resolve_smiles_from_pubchem("Citalopram")
-	amiodarone_smiles = resolve_smiles_from_pubchem("Amiodarone")
-	if not citalopram_smiles:
-		citalopram_smiles = "CN(C)CCCC1(C2=C(CO1)C=C(C=C2)C#N)C3=CC=C(C=C3)F"
-	if not amiodarone_smiles:
-		amiodarone_smiles = "CCCC1=C(C2=C(O1)C=CC(=C2)I)C(=O)C3=CC(=C(C(=C3)I)OCCN(CC)CC)I"
-	print("\nTargeted QT validation (Citalopram + Amiodarone):")
-	if citalopram_smiles and amiodarone_smiles and idx_to_class:
-		targeted = predict_pair_multiclass(
-			model,
-			device,
-			citalopram_smiles,
-			amiodarone_smiles,
-			args.max_nodes,
-			idx_to_class,
-		)
-		if targeted is not None:
-			expected_label = "Cardiotoxicity"
-			pred_label = targeted["pred_label"]
-			pred_prob = targeted["pred_prob"]
-			passed = pred_label == expected_label
-			print(f"  Expected: {expected_label}")
-			print(f"  Predicted: {pred_label} (p={pred_prob:.4f})")
-			print(f"  QT-target test passed: {passed}")
-		else:
-			print("  Targeted test skipped: could not run model prediction for resolved SMILES.")
-	else:
-		print("  Targeted test skipped: could not resolve SMILES from PubChem for one or both drugs.")
-
-	os.makedirs("models", exist_ok=True)
-
-	torch.save(
-		{"model_state": model.state_dict()},
-		"models/drugbank_ddi_simple_gnn.ckpt"
-	)
-
-	print("Model saved to models/drugbank_ddi_simple_gnn.ckpt")
-
-
-	print("Best model saved to:", args.out)
-	print("Latest checkpoint saved to:", args.checkpoint_path)
-
+	# EXPORT INTEGRATED PACKAGE
+	print("\n[EXPORT] Saving integrated inference package...")
+	joblib.dump({
+		"model_state": {k: v.cpu() for k, v in model.state_dict().items()},
+		"class_to_idx": class_to_idx,
+		"idx_to_class": {v: k for k, v in class_to_idx.items()},
+		"descriptor_standardizer": standardizer,
+		"config": {
+			"node_dim": NODE_FEAT_DIM,
+			"hidden_dim": args.hidden_dim,
+			"num_outputs": num_outputs,
+			"max_nodes": args.max_nodes,
+			"use_descriptors": args.use_descriptors,
+			"gnn_type": args.gnn_type
+		}
+	}, "models/ddi_advanced_gnn_integrated.joblib")
 
 if __name__ == "__main__":
 	main()
