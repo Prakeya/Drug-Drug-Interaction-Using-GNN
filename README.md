@@ -10,7 +10,7 @@ A hybrid intelligence platform that predicts drug-drug interactions by treating 
 
 ## The Problem
 
-Pre-market testing cannot capture all rare or long-term drug interactions. Current AI models predict whether an interaction occurs but provide no chemical reasoning, making them impossible for clinicians to trust or verify. The result is reactive detection — harm identified only after patients are already affected.
+Pre-market testing cannot capture all rare or long-term drug interactions. Current AI models predict whether an interaction occurs but provide no chemical reasoning, making them impossible for clinicians to trust or verify. The result is reactive detection, harm identified only after patients are already affected.
 
 ---
 
