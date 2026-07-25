@@ -1,6 +1,5 @@
 # Drug-Drug Interaction using Graph Neural Networks
 
-[![Streamlit App](https://static.streamlit.io/badges/streamlit_badge_svg)](https://druglens-research.streamlit.app/)
 [![RDKit](https://img.shields.io/badge/RDKit-2023.09-green.svg)](https://www.rdkit.org/)
 [![GNN](https://img.shields.io/badge/Architecture-GAT/ResGCN-blue.svg)](https://pytorch-geometric.readthedocs.io/)
 
@@ -104,16 +103,6 @@ Evaluation: Accuracy, Precision (target >90%), F1-Score, MCS overlap score
 
 ---
 
-## Development Timeline
-
-| Phase | Period | Milestone |
-|---|---|---|
-| I. Research | Jan (Weeks 3–4) | Selected GNN architecture for DDI |
-| II. Data Prep | Feb (Weeks 1–3) | SMILES processing via RDKit + NLM RxNav labeling |
-| III. Prototyping | Feb (Week 4) – Mar (Week 2) | Initial training; identified class imbalance issues |
-| IV. Optimisation | Mar (Week 3) – Apr (Week 1) | SMOTE balancing + Streamlit UI testing |
-
----
 
 ## Tech Stack
 
@@ -171,12 +160,5 @@ python scripts/run_experiments.py
 ## Disclaimer
 
 This platform is intended for research and educational purposes only. Predictions are based on structural patterns and must not be used for clinical diagnosis or as a substitute for professional medical advice.
-
----
-
-## Team
-
-**Prakeya S · Harshini Sree · Thiyaanesh N R · Yuvanidhi R**
-Team 17 AIE-A · Amrita Vishwa Vidyapeetham
 
 *Developed for academic and research purposes.*
